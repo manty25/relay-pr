@@ -16,9 +16,19 @@ async function getText(url, timeoutMs = 7000, fetchImpl = globalThis.fetch) {
 
 export const domainOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 
+// GDELT throttles busy (e.g. shared cloud) addresses. After a failure, skip it for a while so
+// builds are not slowed by repeated timeouts; Google News still runs.
+let gdeltPausedUntil = 0;
+export const resetGdeltPause = () => { gdeltPausedUntil = 0; };
+
 export async function gdeltSearch(query, { timespan = '3months', max = 75, fetchImpl } = {}) {
+  if (Date.now() < gdeltPausedUntil && !fetchImpl) throw new Error('GDELT paused after a recent failure');
+  try { return await gdeltFetch(query, { timespan, max, fetchImpl }); } catch (e) { if (!fetchImpl) gdeltPausedUntil = Date.now() + 10 * 60000; throw e; }
+}
+
+async function gdeltFetch(query, { timespan, max, fetchImpl }) {
   const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=artlist&format=json&sort=datedesc&maxrecords=${max}&timespan=${timespan}`;
-  const text = await getText(url, 8000, fetchImpl);
+  const text = await getText(url, 5000, fetchImpl);
   const json = JSON.parse(text || '{}');
   return (json.articles || []).map((a) => ({
     title: a.title, url: a.url, domain: (a.domain || domainOf(a.url)).replace(/^www\./, ''),

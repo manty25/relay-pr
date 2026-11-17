@@ -138,3 +138,27 @@ test('Claude failure falls back to the offline writer (DS-5)', async () => {
   delete process.env.ANTHROPIC_API_KEY;
   process.env.RELAY_LLM = 'off';
 });
+
+test('TG-3: outlets that just covered the topic are added; unknown ones get no embargo; live mode suggests them', async () => {
+  delete process.env.RELAY_OFFLINE;
+  const today = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15) + 'Z';
+  const rss = `<?xml version="1.0"?><rss><channel>
+<item><title>The best folding commuter bikes - Spoke Weekly</title><link>https://news.google.com/a1</link><pubDate>${new Date().toUTCString()}</pubDate><source url="https://spokeweekly.example">Spoke Weekly</source></item>
+<item><title>Folding e-bikes make the commute easier - The New York Times</title><link>https://news.google.com/a2</link><pubDate>${new Date().toUTCString()}</pubDate><source url="https://www.nytimes.com">The New York Times</source></item>
+<item><title>Video: e-bike review - YouTube</title><link>https://news.google.com/a3</link><pubDate>${new Date().toUTCString()}</pubDate><source url="https://www.youtube.com">YouTube</source></item>
+</channel></rss>`;
+  const fakeFetch = async (url) => (String(url).includes('gdelt') ? new Response(JSON.stringify({ articles: [] })) : new Response(rss));
+  const { createCampaign, updateCampaign, SAMPLE_BRIEF } = await import('../src/index.js');
+  const c = await createCampaign(SAMPLE_BRIEF, { now: FIXED_NOW, fetchImpl: fakeFetch });
+  const spoke = c.targets.find((t) => t.outlet === 'Spoke Weekly');
+  assert.ok(spoke, 'newly discovered outlet is targeted');
+  assert.equal(spoke.discovered, true);
+  assert.notEqual(spoke.role, 'embargo', 'no embargoed pre-brief for an unvetted outlet');
+  assert.match(spoke.reason, /found by live news search/);
+  const nyt = c.targets.find((t) => t.outlet === 'The New York Times');
+  assert.ok(nyt, 'recent topical coverage makes an off-beat outlet relevant');
+  assert.ok(!c.targets.some((t) => /youtube/i.test(t.outlet)), 'platforms are not outlets');
+  await updateCampaign(c, { mode: 'live' });
+  assert.ok(c.targeting.suggestions.some((s) => s.outlet === 'Spoke Weekly'), 'live mode lists it as "add a reporter"');
+  process.env.RELAY_OFFLINE = '1';
+});

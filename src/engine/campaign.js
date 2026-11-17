@@ -58,7 +58,7 @@ export async function createCampaign(input, opts = {}) {
   };
 
   const disc = opts.discover === false ? { ok: false, reason: 'discovery disabled', articles: [], query: topicQuery(brief, cls) } : await discoverCoverage(brief, cls, opts);
-  c.discovery = { ok: disc.ok, reason: disc.reason, query: disc.query || topicQuery(brief, cls), articleCount: disc.articles.length, sample: disc.articles.slice(0, 12) };
+  c.discovery = { ok: disc.ok, reason: disc.reason, query: disc.query || topicQuery(brief, cls), articleCount: disc.articles.length, sample: disc.articles.slice(0, 80) };
   retarget(c, disc);
   await generateAssets(c, { useClaude: opts.useClaude });
   c.status = 'ready';
@@ -70,14 +70,14 @@ export async function createCampaign(input, opts = {}) {
 
 function retarget(c, disc) {
   const cls = { ...c.analysis };
-  const { targets, excluded, poolSize, demoUsed } = buildTargets({
+  const { targets, excluded, poolSize, demoUsed, discovered, suggestions } = buildTargets({
     brief: c.brief, cls, nw: c.analysis.newsworthiness, flags: c.plan.flags,
     discovery: disc || { articles: c.discovery?.sample || [], query: c.discovery?.query },
     contacts: loadContacts(), includeDemo: c.mode === 'test', campaignId: c.id,
     suppression: loadSuppression(), history: loadHistory(),
   });
   c.targets = targets;
-  c.targeting = { excluded, poolSize, demoUsed, count: targets.length };
+  c.targeting = { excluded, poolSize, demoUsed, count: targets.length, discovered, suggestions };
 }
 
 // ---------------------------------------------------------------- assets

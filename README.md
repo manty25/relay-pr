@@ -85,6 +85,7 @@ The design follows the "Editorial" direction in `design/options/` (light and dar
 | `RELAY_PUBLIC_URL` | Public base URL for newsroom pages and tracked links. |
 | `RELAY_NEWSROOM_DIR` | Mirror the newsroom (HTML, RSS, sitemap, llms.txt) into a static-site folder on live publish. |
 | `RELAY_OFFLINE=1` | Skip live media discovery (GDELT + Google News). |
+| `NODE_USE_ENV_PROXY=1` | Needed only behind an HTTPS proxy (corporate networks, some cloud sandboxes): Node's built-in fetch ignores `HTTPS_PROXY` without it (Node ≥ 22.21). Without it, discovery silently falls back to the built-in outlet list. |
 | `RELAY_PASSWORD` | Basic-auth password for the app when exposed beyond localhost (`HOST=0.0.0.0`). |
 | `RELAY_MAX_EMAILS_PER_HOUR` | Live throttle (default 20). |
 
