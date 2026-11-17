@@ -17,6 +17,7 @@ const cmd = args[0] || 'help';
 const flag = (name, def = '') => { const i = args.indexOf(`--${name}`); return i > -1 ? (args[i + 1] && !args[i + 1].startsWith('--') ? args[i + 1] : true) : def; };
 const positional = args.slice(1).filter((a, i, arr) => !a.startsWith('--') && !(i > 0 && arr[i - 1].startsWith('--') && !['--json', '--no-sim', '--offline'].includes(arr[i - 1])));
 
+process.stdout.on('error', (e) => { if (e.code === 'EPIPE') process.exit(0); throw e; }); // e.g. `relay demo | head`
 const out = (s = '') => process.stdout.write(s + '\n');
 const money = (x) => `$${Number(x).toLocaleString('en-US', { maximumFractionDigits: 2 })}`;
 const bold = (s) => (process.stdout.isTTY ? `\x1b[1m${s}\x1b[0m` : s);

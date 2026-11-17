@@ -16,7 +16,7 @@ $5k–$25k/month) and **reach quality** (relevance- and recency-ranked targets, 
 ## Run a test campaign (no setup)
 
 ```bash
-cd pr-campaign
+git clone <this repository> relay && cd relay
 npm install          # one dependency: the official Anthropic SDK
 npm run demo         # full test campaign with a sample brief
 ```
