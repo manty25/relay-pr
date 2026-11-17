@@ -33,6 +33,21 @@ replies and coverage (labelled **SIMULATED** everywhere), and writes a report. O
 `data/campaigns/<id>/`: `report.html`, `press-release.txt`, `pitches.txt`, `social.txt`, `media-list.csv`,
 `newsroom-preview.html` and `outbox/`.
 
+## Run it from any folder
+
+`npm start` and `npm run demo` must be run inside the Relay folder. To use Relay from anywhere, install the
+`relay` command once:
+
+```bash
+cd relay && npm link        # adds a global "relay" command
+relay demo                  # from any folder
+relay test "Acme opens a second factory in Ohio" --org "Acme"
+relay serve                 # web app at http://localhost:8787 (add --port 3000 to change it)
+```
+
+Wherever you run it from, campaigns are saved in Relay's own `data/` folder. Set `RELAY_DATA_DIR` to keep them
+somewhere else, e.g. `RELAY_DATA_DIR=~/relay-data relay serve`. To remove the command: `npm unlink -g relay-pr`.
+
 ## Web app
 
 ```bash

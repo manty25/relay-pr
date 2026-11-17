@@ -8,7 +8,7 @@ import {
   createCampaign, loadCampaign, updateCampaign, approveCampaign, launchCampaign, runJobs, logReply, addCoverage,
   monitorCampaign, complianceChecks, runTestCampaign, computeReport, reportHtml, simulateOutcomes, exportCampaignFiles, SAMPLE_BRIEF,
 } from './src/index.js';
-import { listCampaigns, deleteCampaign, saveCampaign, APP_ROOT, campaignDir, readAudit } from './src/store.js';
+import { listCampaigns, deleteCampaign, saveCampaign, APP_ROOT, campaignDir, readAudit, dataDir } from './src/store.js';
 import { loadContacts, importContactsCsv, contactsCsv, loadSuppression, suppress } from './src/engine/contacts.js';
 import { outboxFiles, emailProvider } from './src/distribute/email.js';
 import { socialAdapters } from './src/distribute/social.js';
@@ -175,11 +175,15 @@ export function startScheduler(intervalMs = 60_000) {
   }, intervalMs);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(APP_ROOT, 'server.js')) {
-  createServer().listen(PORT, HOST, () => {
+export function start({ port = PORT, host = HOST } = {}) {
+  const server = createServer().listen(port, host, () => {
     const st = status();
-    console.log(`Relay running at http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}`);
+    console.log(`Relay running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);
     console.log(`Writer: ${st.writer.name}${st.writer.model ? ` (${st.writer.model})` : ''} · Email: ${st.email} · Discovery: ${st.discovery}`);
+    console.log(`Data: ${dataDir()}`);
   });
   startScheduler();
+  return server;
 }
+
+if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(APP_ROOT, 'server.js')) start();

@@ -73,14 +73,14 @@ async function main() {
     }
     case 'test': {
       const brief = briefFromArgs();
-      if (!brief) throw new Error('Usage: node cli.js test "One sentence about the news" --org "Organisation"');
+      if (!brief) throw new Error('Usage: relay test "One sentence about the news" --org "Organisation"');
       const { campaign, report, dir } = await runTestCampaign(brief, { simulate: !flag('no-sim') });
       if (flag('json')) return out(JSON.stringify({ id: campaign.id, report }, null, 2));
       return summary(campaign, report, dir);
     }
     case 'plan': {
       const brief = briefFromArgs();
-      if (!brief) throw new Error('Usage: node cli.js plan "One sentence about the news" --org "Organisation"');
+      if (!brief) throw new Error('Usage: relay plan "One sentence about the news" --org "Organisation"');
       const c = await createCampaign(brief, { mode: 'test' });
       const dir = exportCampaignFiles(c);
       if (flag('json')) return out(JSON.stringify(c, null, 2));
@@ -96,24 +96,29 @@ async function main() {
     }
     case 'import-contacts': {
       const file = positional[0];
-      if (!file) throw new Error('Usage: node cli.js import-contacts contacts.csv');
+      if (!file) throw new Error('Usage: relay import-contacts contacts.csv');
       return out(JSON.stringify(importContactsCsv(fs.readFileSync(file, 'utf8'))));
     }
-    case 'serve':
-      await import('./server.js');
+    case 'serve': {
+      const port = flag('port');
+      const { start } = await import('./server.js');
+      start(port && port !== true ? { port: Number(port) } : {});
       return;
+    }
     default:
       out(`Relay — PR campaigns from one sentence.
 
-  node cli.js demo                                   Full test campaign with a sample brief
-  node cli.js test "<news>" --org "<organisation>"   Full test campaign from your own one-liner
-  node cli.js plan "<news>" --org "<organisation>"   Build plan + assets only (no launch)
-  node cli.js list                                   List campaigns
-  node cli.js report <id>                            Results as JSON
-  node cli.js import-contacts <file.csv>             Import journalist contacts
-  node cli.js serve                                  Start the web app (http://localhost:8787)
+  relay demo                                   Full test campaign with a sample brief
+  relay test "<news>" --org "<organisation>"   Full test campaign from your own one-liner
+  relay plan "<news>" --org "<organisation>"   Build plan + assets only (no launch)
+  relay list                                   List campaigns
+  relay report <id>                            Results as JSON
+  relay import-contacts <file.csv>             Import journalist contacts
+  relay serve [--port 8787]                    Start the web app (http://localhost:8787)
 
-Options: --city --website --spokesperson --title --email --budget free|lean|full --region us|uk|eu… --date YYYY-MM-DD --offline --no-sim --json`);
+(Without "npm link", use "node cli.js" instead of "relay" inside the Relay folder.)
+
+Options: --port (serve) --city --website --spokesperson --title --email --budget free|lean|full --region us|uk|eu… --date YYYY-MM-DD --offline --no-sim --json`);
   }
 }
 
