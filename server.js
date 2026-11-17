@@ -19,6 +19,7 @@ import { TOPICS } from './src/knowledge/topics.js';
 import { runResearch, researchState, researchEnabled } from './src/engine/campaign.js';
 import { searchDirectory, directoryStats, forgetJournalist, directoryCsv } from './src/engine/directory.js';
 import { currentPlan, PLANS, upgradeUrl } from './src/plans.js';
+import { apolloEnabled, apolloCap } from './src/engine/apollo.js';
 import { CHANNELS } from './src/knowledge/channels.js';
 
 const PORT = Number(process.env.PORT || 8787);
@@ -76,6 +77,7 @@ function status() {
     discovery: process.env.RELAY_OFFLINE === '1' ? 'offline' : 'gdelt + google news',
     contacts: loadContacts().length, suppression: loadSuppression().length,
     plan: currentPlan().id, research: researchEnabled() ? 'on' : 'off', directory: directoryStats(),
+    apollo: apolloEnabled() ? { enabled: true, maxPerCampaign: apolloCap() } : { enabled: false },
   };
 }
 

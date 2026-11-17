@@ -86,6 +86,8 @@ test('research end to end: bylines, author pages, desks; robots respected; nothi
   assert.ok(!research.found.some((f) => f.name === 'Someone Else'), '"more from" links are not bylines');
   assert.ok(!requested.includes('https://citycycle.news/members/staff-list'), 'robots.txt Disallow respected (RS-2)');
   assert.ok(research.blockedByRobots >= 1);
+  assert.ok(!requested.some((u) => u.includes('apollo.io')), 'no Apollo calls without an API key');
+  assert.equal(research.apollo, undefined);
 
   const outlet = dir.loadOutlets().find((o) => o.domain === 'citycycle.news');
   assert.deepEqual(outlet.emails.map((e) => e.address).sort(), ['newsroom@citycycle.news', 'tips@citycycle.news'], 'desk addresses kept; ads/subscriptions/gmail dropped (RS-8)');
@@ -139,4 +141,81 @@ test('opted-out desk addresses are not used either', () => {
   suppress('tips@citycycle.news', 'opt-out');
   const desks = dir.deskContactsForCampaign({ beats: ['transport', 'tech'], topicId: 'product_launch' });
   assert.ok(!desks.some((d) => d.email === 'tips@citycycle.news'));
+});
+
+// ---- Apollo.io (optional, operator's own licence) ------------------------------------------
+const apollo = await import('../src/engine/apollo.js');
+
+test('Apollo: only editorial titles count, ranked by beat', () => {
+  assert.equal(apollo.titleFit('Advertising Sales Manager', ['transport']), 0);
+  assert.equal(apollo.titleFit('Software Engineer', ['transport']), 0);
+  assert.ok(apollo.titleFit('Transportation Reporter', ['transport']) > apollo.titleFit('Food Writer', ['transport']));
+});
+
+test('Apollo: keeps only verified, confident, same-outlet work addresses', async () => {
+  process.env.APOLLO_API_KEY = 'test-key';
+  const fetchImpl = async () => new Response(JSON.stringify({ credits_consumed: 4, matches: [
+    { name: 'A One', email: 'a.one@outlet.news', email_status: 'verified', match_confidence: 'high' },
+    { name: 'B Two', email: 'b.two@outlet.news', email_status: 'unverified', match_confidence: 'high' },
+    { name: 'C Three', email: 'c.three@gmail.com', email_status: 'verified', match_confidence: 'high' },
+    { name: 'D Four', email: 'd.four@outlet.news', email_status: 'verified', match_confidence: 'low' },
+    null,
+  ] }));
+  const r = await apollo.revealEmails(['A One', 'B Two', 'C Three', 'D Four', 'E Five'].map((name, i) => ({ key: String(i), name, domain: 'outlet.news' })), { fetchImpl });
+  assert.deepEqual(r.found.map((f) => f.email), ['a.one@outlet.news']);
+  assert.equal(r.credits, 4);
+  delete process.env.APOLLO_API_KEY;
+});
+
+test('Apollo fills gaps after research, within the cap, labelled and disclosed', async () => {
+  delete process.env.RELAY_OFFLINE;
+  process.env.APOLLO_API_KEY = 'test-key';
+  process.env.RELAY_APOLLO_MAX_PER_CAMPAIGN = '2';
+  const calls = [];
+  const withApollo = async (url, init) => {
+    const u = String(url);
+    if (u.includes('news.google.com')) {
+      return new Response(`<?xml version="1.0"?><rss><channel>
+<item><title>Folding e-bikes win over commuters - CityCycle</title><link>https://news.google.com/a1</link><pubDate>${today}</pubDate><source url="https://citycycle.news">CityCycle</source></item>
+<item><title>Commuter e-bike sales climb - Green Wheels</title><link>https://news.google.com/a2</link><pubDate>${today}</pubDate><source url="https://greenwheels.news">Green Wheels</source></item>
+</channel></rss>`);
+    }
+    if (u.includes('api.apollo.io')) {
+      calls.push({ url: u, body: init?.body ? JSON.parse(init.body) : null, key: init?.headers?.['x-api-key'] });
+      if (u.includes('/mixed_people/api_search')) {
+        return new Response(JSON.stringify({ people: u.includes('greenwheels') ? [
+          { id: 'p_sales', name: 'Sam Sales', title: 'Advertising Sales Manager' },
+          { id: 'p_ola', name: 'Ola Nordmann', title: 'Transportation Reporter' },
+          { id: 'p_food', name: 'Fay Food', title: 'Food Writer' },
+        ] : [] }));
+      }
+      if (u.includes('/people/bulk_match')) {
+        const details = JSON.parse(init.body).details;
+        return new Response(JSON.stringify({ credits_consumed: details.length, matches: details.map((d) => (
+          d.name === 'Tom Berg' ? { name: 'Tom Berg', title: 'Transport Reporter', email: 'tberg@citycycle.news', email_status: 'verified', match_confidence: 'high' }
+            : d.id === 'p_ola' ? { name: 'Ola Nordmann', title: 'Transportation Reporter', email: 'ola.nordmann@greenwheels.news', email_status: 'verified', match_confidence: 'high' } : null)) }));
+      }
+    }
+    return fakeFetch(url);
+  };
+  const c = await relay.createCampaign({ ...relay.SAMPLE_BRIEF, news: 'Lumora Mobility launches the Lumora Commuter Pro, a foldable e-bike for commuters.' }, { now: FIXED_NOW, fetchImpl: withApollo });
+  const res = await runResearch(c.id, { fetchImpl: withApollo, delayMs: 0 });
+  assert.equal(res.apollo.lookedUp, 2, 'cap respected');
+  assert.equal(res.apollo.revealed, 2);
+  assert.ok(calls.every((x) => x.key === 'test-key'));
+  const match = calls.find((x) => x.url.includes('bulk_match'));
+  assert.deepEqual(match.body.details.map((d) => d.name || d.id).sort(), ['Tom Berg', 'p_ola'], 'the reporter missing an address + best-fit title; no sales staff');
+
+  const tom = dir.loadJournalists().find((j) => j.name === 'Tom Berg');
+  assert.equal(tom.emails[0].address, 'tberg@citycycle.news');
+  assert.equal(tom.emails[0].provider, 'apollo');
+
+  const fresh = relay.loadCampaign(c.id);
+  const t = fresh.targets.find((x) => x.email === 'ola.nordmann@greenwheels.news') || fresh.targets.find((x) => x.email === 'tberg@citycycle.news');
+  assert.ok(t, 'Apollo-found reporter is on the media list');
+  assert.equal(t.emailProvider, 'apollo');
+  const p = fresh.assets.pitches.find((x) => x.email === t.email);
+  assert.match(p.body, /Apollo\.io business directory/, 'source disclosed in the first message (RS-4)');
+  delete process.env.APOLLO_API_KEY; delete process.env.RELAY_APOLLO_MAX_PER_CAMPAIGN;
+  process.env.RELAY_OFFLINE = '1';
 });

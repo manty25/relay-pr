@@ -15,7 +15,8 @@ export function defaultOpener(t) {
 const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
 export function optOutLine(t) {
   const base = 'Not a fit for your beat? Reply “no thanks” and I won’t pitch you again.';
-  return t.emailSource && /^directory/.test(t.source || '') ? `${base} (I found your address on ${hostOf(t.emailSource)}.)` : base;
+  if (!t.emailSource || !/^directory/.test(t.source || '')) return base;
+  return t.emailProvider === 'apollo' ? `${base} (Your work address came from the Apollo.io business directory.)` : `${base} (I found your address on ${hostOf(t.emailSource)}.)`;
 }
 
 export function pitchFor({ target, kind, core, brief, launchAt, exclusiveDeadline, opener, newsroomUrl }) {

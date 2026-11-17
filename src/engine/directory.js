@@ -35,7 +35,7 @@ export function upsertJournalist(found, ctx = {}, list = null) {
   Object.assign(j.social, found.social || {});
   for (const e of found.emails || []) {
     const ex = j.emails.find((x) => x.address.toLowerCase() === e.address.toLowerCase());
-    if (ex) { ex.verifiedAt = now; ex.source = e.source || ex.source; } else j.emails.push({ address: e.address, source: e.source, foundAt: now, verifiedAt: now });
+    if (ex) { ex.verifiedAt = now; ex.source = e.source || ex.source; ex.provider = e.provider || ex.provider || 'published'; } else j.emails.push({ address: e.address, source: e.source, provider: e.provider || 'published', foundAt: now, verifiedAt: now });
   }
   for (const a of found.articles || []) if (!j.articles.some((x) => x.url === a.url)) j.articles.unshift(a);
   j.articles = j.articles.sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, MAX_ARTICLES);
@@ -107,7 +107,7 @@ export function contactsForCampaign({ beats, topicId, terms, place, limit = Infi
     if (score <= 0) continue;
     const recent = j.articles.find((a) => terms.some((t) => a.title.toLowerCase().includes(t))) || j.articles[0] || null;
     out.push({
-      id: `dir_${j.id}`, name: j.name, email: email.address, emailSource: email.source, emailStale: isStale(email),
+      id: `dir_${j.id}`, name: j.name, email: email.address, emailSource: email.source, emailProvider: email.provider || 'published', emailStale: isStale(email),
       outlet: j.outlet, domain: j.domain, beats: Object.keys(j.beats), tier: 0, timezone: '',
       recentArticle: recent ? { title: recent.title, url: recent.url, date: recent.date } : null,
       source: 'directory', directoryId: j.id, _fit: score,
@@ -168,7 +168,7 @@ export function forgetJournalist(id) {
 
 export function directoryCsv(rows) {
   const esc = (v) => { const s = String(v ?? ''); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const lines = ['name,email,outlet,domain,beats,email_source,email_verified,latest_article,latest_article_url'];
-  for (const j of rows) lines.push([j.name, j.email?.address, j.outlet, j.domain, Object.keys(j.beats).join(';'), j.email?.source, j.email?.verifiedAt?.slice(0, 10), j.articles[0]?.title, j.articles[0]?.url].map(esc).join(','));
+  const lines = ['name,email,outlet,domain,beats,email_source,email_provider,email_verified,latest_article,latest_article_url'];
+  for (const j of rows) lines.push([j.name, j.email?.address, j.outlet, j.domain, Object.keys(j.beats).join(';'), j.email?.source, j.email?.provider || 'published', j.email?.verifiedAt?.slice(0, 10), j.articles[0]?.title, j.articles[0]?.url].map(esc).join(','));
   return lines.join('\n') + '\n';
 }

@@ -113,6 +113,22 @@ still works as before, and your list always takes priority.
 
 Rules: [docs/STANDARDS.md §8](docs/STANDARDS.md).
 
+### Apollo.io (optional)
+
+If you have an Apollo plan with API access, add `APOLLO_API_KEY` (in Render: the service's **Environment** tab).
+After its own research, Relay then uses Apollo to fill the gaps:
+
+1. Reporters found by byline whose outlet publishes no address are looked up by name and outlet.
+2. Relevant outlets where research found no reporter are searched for editorial staff (reporter, editor,
+   correspondent…). This search is free. Only the best-fitting titles are looked up, never sales or marketing
+   staff.
+
+Only addresses Apollo marks **verified**, at the outlet's own domain, are used. They show as "via Apollo.io",
+and the first pitch tells the reporter their work address came from the Apollo.io business directory.
+Looking up an address uses Apollo credits (usually 1 per person found; none if there's no match). Relay
+looks up at most `RELAY_APOLLO_MAX_PER_CAMPAIGN` people per campaign (default 15) and shows the credits used
+on the Media list. Apollo data stays in your own deployment.
+
 ## Plans
 
 | | Standard | Pro |
@@ -148,6 +164,8 @@ button points, for example a Stripe payment link or a sales form. Taking the pay
 | `RELAY_UPGRADE_URL` | Link behind the Upgrade button (payment link or sales form). |
 | `RELAY_AUTO_RESEARCH=0` | Don't start journalist research automatically when a campaign is built (the Find journalists button still works). |
 | `RELAY_RESEARCH_DELAY_MS` | Pause between requests to the same site during research (default 1000). |
+| `APOLLO_API_KEY` | Your Apollo.io API key — fills missing reporter addresses after research (see above). |
+| `RELAY_APOLLO_MAX_PER_CAMPAIGN` | Most people Relay looks up in Apollo per campaign (default 15; 0 turns lookups off). |
 
 ## Going live
 
@@ -165,7 +183,7 @@ service choice and a checklist; you submit it to the wire service you choose.
 ## Tests
 
 ```bash
-npm test             # 61 tests, named after the standards they enforce
+npm test             # 64 tests, named after the standards they enforce
 ```
 
 The tests run offline and include a mock Messages API that checks the Claude writing path end to end.

@@ -413,11 +413,12 @@ function researchPanel(c, r) {
   if (r.status === 'running') {
     const p = r.progress || {};
     title = 'Researching journalists…';
-    sub = `${p.outletsDone || 0} of ${p.outlets || '…'} outlets checked · ${p.withEmail || 0} reporters with a published address so far`;
+    sub = p.step === 'apollo' ? 'Looking up missing addresses in Apollo.io…' : `${p.outletsDone || 0} of ${p.outlets || '…'} outlets checked · ${p.withEmail || 0} reporters with a published address so far`;
     meter = h('div', { class: 'meter' }, h('span', { style: `width:${p.outlets ? Math.round((p.outletsDone / p.outlets) * 100) : 5}%` }));
   } else if (r.status === 'done') {
     title = `${r.withEmail} reporters with published addresses`;
-    sub = `${r.reporters} bylines read across ${r.outlets} outlets, ${r.deskAddresses} desk addresses, ${r.pagesFetched} pages in ${r.seconds}s${r.blockedByRobots ? ` · ${r.blockedByRobots} pages skipped at the site’s request` : ''}. Saved to your directory.`;
+    const ap = r.apollo ? ` · Apollo.io: ${r.apollo.revealed} verified address${r.apollo.revealed === 1 ? '' : 'es'} for ${r.apollo.credits} credit${r.apollo.credits === 1 ? '' : 's'}` : '';
+    sub = `${r.reporters} reporters across ${r.outlets} outlets, ${r.deskAddresses} desk addresses, ${r.pagesFetched} pages in ${r.seconds}s${r.blockedByRobots ? ` · ${r.blockedByRobots} pages skipped at the site’s request` : ''}${ap}. Saved to your directory.`;
     action = c.jobs?.length ? null : h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => start(e.currentTarget) }, pro ? 'Re-check addresses' : 'Search again');
   } else if (r.status === 'failed') {
     title = 'Research could not finish'; sub = r.error || '';
@@ -449,7 +450,7 @@ function media(c) {
         h('span', { class: 'small muted' }, x.domain))))) : null,
     h('div', { class: 'tablewrap' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Outlet'), h('th', {}, 'Contact'), h('th', {}, 'Role'), h('th', {}, 'Fit'), h('th', {}, 'Why'))),
-      h('tbody', {}, ...c.targets.map((t) => h('tr', {}, h('td', {}, h('span', { class: 'o' }, t.outlet), h('div', { class: 'small muted' }, `tier ${t.tier}`)), h('td', {}, t.name, h('div', { class: 'small muted' }, t.email), h('div', { class: 'src' }, badge(SOURCE_LABEL[srcKey(t)] || 'Contact', srcKey(t) === 'directory' ? 'ok' : ''), t.emailSource ? [' ', h('a', { href: t.emailSource, target: '_blank', rel: 'noopener' }, 'published here ↗')] : null)),
+      h('tbody', {}, ...c.targets.map((t) => h('tr', {}, h('td', {}, h('span', { class: 'o' }, t.outlet), h('div', { class: 'small muted' }, `tier ${t.tier}`)), h('td', {}, t.name, h('div', { class: 'small muted' }, t.email), h('div', { class: 'src' }, badge(SOURCE_LABEL[srcKey(t)] || 'Contact', srcKey(t) === 'directory' ? 'ok' : ''), t.emailProvider === 'apollo' ? ' via Apollo.io' : t.emailSource ? [' ', h('a', { href: t.emailSource, target: '_blank', rel: 'noopener' }, 'published here ↗')] : null)),
         h('td', {}, badge(t.role.replace(/_/g, ' ').replace(/exclusive backup (\d)/, 'backup $1'), t.role === 'exclusive' ? 'acc' : '')), h('td', { class: 'num' }, t.score), h('td', { class: 'muted small' }, t.reason)))))));
 }
 
@@ -569,7 +570,7 @@ async function viewDirectory() {
       h('thead', {}, h('tr', {}, h('th', {}, 'Reporter'), h('th', {}, 'Address'), h('th', {}, 'Covers'), h('th', {}, 'Latest piece'), h('th', {}, ''))),
       h('tbody', {}, ...data.rows.map((j) => h('tr', {},
         h('td', {}, h('span', { class: 'o' }, j.name), h('div', { class: 'small muted' }, j.outlet)),
-        h('td', {}, j.email ? [h('div', {}, j.email.address), h('div', { class: 'src' }, `verified ${j.email.verifiedAt.slice(0, 10)} · `, h('a', { href: j.email.source, target: '_blank', rel: 'noopener' }, 'source ↗'))] : h('span', { class: 'muted small' }, 'No published address')),
+        h('td', {}, j.email ? [h('div', {}, j.email.address), h('div', { class: 'src' }, `verified ${j.email.verifiedAt.slice(0, 10)} · `, j.email.provider === 'apollo' ? 'via Apollo.io' : h('a', { href: j.email.source, target: '_blank', rel: 'noopener' }, 'source ↗'))] : h('span', { class: 'muted small' }, 'No address yet')),
         h('td', { class: 'small muted' }, [...Object.keys(j.topics).map((t) => TOPIC_LABELS[t] || t), ...Object.keys(j.beats).slice(0, 3)].join(', ')),
         h('td', { class: 'small' }, j.articles[0] ? h('a', { href: j.articles[0].url, target: '_blank', rel: 'noopener' }, j.articles[0].title.slice(0, 70)) : '—'),
         h('td', {}, h('button', { class: 'link', type: 'button', title: 'Delete this person’s data and never collect it again', onclick: async () => { if (confirm(`Remove ${j.name} and never collect their address again?`)) { await api(`directory/journalists/${encodeURIComponent(j.id)}`, { method: 'DELETE' }); toast('Removed and suppressed'); viewDirectory(); } } }, 'Forget')))))))

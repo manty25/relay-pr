@@ -27,3 +27,5 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY  # optional: Claude writes the copy
         sync: false
+      - key: APOLLO_API_KEY     # optional: Apollo.io fills missing reporter addresses
+        sync: false

@@ -8,6 +8,7 @@ import { runQa } from './qa.js';
 import { loadContacts, loadSuppression, loadHistory, suppress, recordPitch, markReplied } from './contacts.js';
 import { contactsForCampaign, deskContactsForCampaign, mergeResearch } from './directory.js';
 import { researchJournalists } from './research.js';
+import { apolloEnabled, apolloFill } from './apollo.js';
 import { currentPlan } from '../plans.js';
 import { writeOffline, quoteParagraph } from '../generate/offline.js';
 import { llmAvailable, writeWithClaude, repairWithClaude, MODEL } from '../generate/claude.js';
@@ -113,11 +114,18 @@ export async function runResearch(cid, { fetchImpl, delayMs } = {}) {
   try {
     const discovery = { articles: c.discovery?.sample || [], query: c.discovery?.query };
     const res = await researchJournalists({ brief: c.brief, cls: c.analysis, discovery, targets: c.targets, plan, fetchImpl, delayMs, onProgress: (p) => { job.progress = p; } });
+    if (apolloEnabled()) {
+      job.progress = { ...job.progress, step: 'apollo' };
+      res.stats.apollo = await apolloFill({ research: res, targets: c.targets, beats: c.analysis.specificBeats?.length ? c.analysis.specificBeats : c.analysis.beats, fetchImpl });
+      res.stats.withEmail = res.journalists.filter((j) => j.emails.length).length;
+      res.stats.reporters = res.journalists.length;
+      res.log.push(`Apollo.io: ${res.stats.apollo.revealed} verified address(es) from ${res.stats.apollo.lookedUp} lookup(s), ${res.stats.apollo.credits} credit(s)`);
+    }
     mergeResearch(res, { campaignId: cid, topicId: c.analysis.topic.id, beats: c.analysis.specificBeats?.length ? c.analysis.specificBeats : c.analysis.beats, terms: discovery.query?.terms || [], region: c.brief.region });
     const fresh = loadCampaign(cid);
     fresh.research = {
       status: 'done', plan: plan.id, startedAt: job.startedAt, finishedAt: new Date().toISOString(), ...res.stats, log: res.log,
-      found: res.journalists.map((j) => ({ name: j.name, outlet: j.outlet, email: j.emails[0]?.address || '', source: j.emails[0]?.source || '', article: j.articles[0] || null })),
+      found: res.journalists.map((j) => ({ name: j.name, outlet: j.outlet, email: j.emails[0]?.address || '', source: j.emails[0]?.source || '', provider: j.emails[0]?.provider || 'published', article: j.articles[0] || null })),
     };
     if (!fresh.jobs?.length) {
       const before = fresh.targets.map((t) => t.email).join();
