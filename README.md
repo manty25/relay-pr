@@ -91,6 +91,43 @@ else needs the password. Relay refuses to start on a public address without `REL
 Render's address automatically; set `RELAY_PUBLIC_URL` if you add your own domain. Email-provider and social
 keys for live campaigns go in the service's **Environment** tab (see the table below).
 
+## Journalist research and the directory
+
+When a campaign is built, Relay researches the reporters who cover the topic. It runs in the background,
+and the Media list shows its progress:
+
+1. It finds each relevant outlet's recent articles on the topic, from the news index and the outlet's own RSS
+   feed.
+2. It reads the bylines and visits each reporter's author page.
+3. It reads the outlet's contact, tips and masthead pages.
+4. It keeps only addresses the outlet publishes itself, each with a link to where it was found. Nothing is
+   guessed or probed, robots.txt is respected, and pages are fetched slowly.
+
+Researched reporters replace placeholder desks in the media list. Pitches open with their own recent article,
+and the first message says where their address was published, as GDPR Art. 14 requires.
+
+Everything found is saved in the **Directory** (top navigation). Over time it becomes your own media database,
+organised by topic: new campaigns on a topic you've covered before get a ready list straight away. "Forget"
+removes a person and blocks their address from being collected again. Importing your own contact list (CSV)
+still works as before, and your list always takes priority.
+
+Rules: [docs/STANDARDS.md §8](docs/STANDARDS.md).
+
+## Plans
+
+| | Standard | Pro |
+|---|---|---|
+| Your own contact list | ✓ | ✓ |
+| Reporters researched per campaign | up to 10 | up to 40 (incl. mastheads and staff pages) |
+| Directory reuse in new campaigns | up to 15 reporters | unlimited |
+| Directory browsing | first 50 | everything |
+| Re-check addresses before live sends | — | ✓ |
+| Directory export (CSV) | — | ✓ |
+
+The operator sets the plan with `RELAY_PLAN` (`standard` or `pro`). `RELAY_UPGRADE_URL` is where the Upgrade
+button points, for example a Stripe payment link or a sales form. Taking the payment and then setting
+`RELAY_PLAN=pro` for that customer's deployment is up to you; Relay has no billing system of its own.
+
 ## Configuration (all optional)
 
 | Variable | Effect |
@@ -107,6 +144,10 @@ keys for live campaigns go in the service's **Environment** tab (see the table b
 | `NODE_USE_ENV_PROXY=1` | Needed only behind an HTTPS proxy (corporate networks, some cloud sandboxes): Node's built-in fetch ignores `HTTPS_PROXY` without it (Node ≥ 22.21). Without it, discovery silently falls back to the built-in outlet list. |
 | `RELAY_PASSWORD` | Password for the app (any username). Required when listening beyond localhost, e.g. `HOST=0.0.0.0`. |
 | `RELAY_MAX_EMAILS_PER_HOUR` | Live throttle (default 20). |
+| `RELAY_PLAN` | `standard` (default) or `pro` — see Plans. |
+| `RELAY_UPGRADE_URL` | Link behind the Upgrade button (payment link or sales form). |
+| `RELAY_AUTO_RESEARCH=0` | Don't start journalist research automatically when a campaign is built (the Find journalists button still works). |
+| `RELAY_RESEARCH_DELAY_MS` | Pause between requests to the same site during research (default 1000). |
 
 ## Going live
 
@@ -124,7 +165,7 @@ service choice and a checklist; you submit it to the wire service you choose.
 ## Tests
 
 ```bash
-npm test             # 49 tests, named after the standards they enforce
+npm test             # 61 tests, named after the standards they enforce
 ```
 
 The tests run offline and include a mock Messages API that checks the Claude writing path end to end.

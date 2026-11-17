@@ -64,6 +64,8 @@ const state = { view: null, campaign: null, tab: null, primary: null, secondary:
 async function loadStatus() {
   try { state.status = await api('status'); } catch { state.status = null; }
   renderMode();
+  const pro = state.status?.plan === 'pro';
+  $('#plan').replaceChildren(h('b', {}, pro ? 'Pro' : 'Standard'), pro ? '' : ' · Upgrade');
 }
 function renderMode() {
   const live = state.campaign?.mode === 'live';
@@ -218,6 +220,7 @@ async function viewCampaign(id, tab = 'overview') {
     body);
   state.primary = primaryFor(c);
   body.append(await ({ overview, assets, media, launch, results }[tab] || overview)(c));
+  watchResearch(c, tab);
   // Phones: the next step is always one thumb away.
   const p = state.primary;
   main.firstChild.classList.add('has-mbar');
@@ -270,7 +273,7 @@ function overview(c) {
           h('ol', { class: 'list' }, ...c.plan.timeline.filter((s) => s.phase !== 'report').map((s, i) => h('li', { class: i === 0 ? 'next' : '' }, h('time', {}, `${fmt.day(s.at, tz)} · ${fmt.time(s.at, tz)}`), h('span', {}, s.label))))),
         h('section', { class: 'sec who' }, h('h4', {}, 'Who we’re pitching', h('a', { href: `#/c/${c.id}/media` }, `All ${c.targets.length} →`)),
           h('ol', { class: 'list' }, ...c.targets.slice().sort((a, b) => (a.role === 'exclusive' ? -1 : b.role === 'exclusive' ? 1 : 0)).slice(0, 5).map((t) => h('li', {},
-            h('span', {}, h('span', { class: 'o' }, t.outlet), h('small', {}, t.recentArticle ? `Covered “${t.recentArticle.title.slice(0, 48)}”` : t.reason.replace(/^beat: /, '').replace(/ · tier \d/, ''))),
+            h('span', {}, h('span', { class: 'o' }, t.outlet), h('small', {}, srcKey(t) === 'directory' || srcKey(t) === 'import' ? `${t.name}${t.recentArticle ? ` · wrote “${t.recentArticle.title.slice(0, 40)}”` : ''}` : t.recentArticle ? `Covered “${t.recentArticle.title.slice(0, 48)}”` : t.reason.replace(/^beat: /, '').replace(/ · tier \d/, ''))),
             h('span', { class: 'r' }, h('b', { class: t.role === 'exclusive' ? 'x' : '' }, roleName(t.role)), `fit ${t.score}`)))))),
       h('div', { class: 'cols2' },
         h('section', { class: 'sec' }, h('h4', {}, 'News judgement'), h('p', { style: 'margin-top:12px;font-size:14px;color:var(--ink2)' }, nw.advice),
@@ -382,6 +385,55 @@ function assets(c) {
   return h('div', {}, qaList(c), bar, pane);
 }
 
+// Research runs in the background after a campaign is built; refresh the view when it finishes.
+let researchTimer = null;
+async function watchResearch(c, tab) {
+  clearTimeout(researchTimer);
+  const r = await api(`campaigns/${c.id}/research`).catch(() => null);
+  if (r?.status !== 'running') return;
+  const tick = async () => {
+    if (state.campaign?.id !== c.id) return;
+    const s = await api(`campaigns/${c.id}/research`).catch(() => null);
+    const el = $('#research-progress');
+    if (s?.status === 'running') {
+      if (el) el.replaceWith(researchPanel(c, s));
+      researchTimer = setTimeout(tick, 2000);
+    } else if (['overview', 'media'].includes(state.tab)) { toast(s?.status === 'done' ? `Research done — ${s.withEmail} reporters with published addresses` : 'Research finished'); route(); }
+  };
+  if (tab === 'overview' && !$('#research-progress')) $('.mast')?.after(researchPanel(c, r));
+  researchTimer = setTimeout(tick, 1500);
+}
+
+function researchPanel(c, r) {
+  r ||= c.research || { status: 'idle' };
+  const offline = state.status?.research === 'off';
+  const pro = state.status?.plan === 'pro';
+  const start = (btn) => busy(btn, 'Starting…', () => api(`campaigns/${c.id}/research`, { method: 'POST', body: {} })).then(() => { toast('Researching journalists…'); route(); });
+  let title, sub, action = null, meter = null;
+  if (r.status === 'running') {
+    const p = r.progress || {};
+    title = 'Researching journalists…';
+    sub = `${p.outletsDone || 0} of ${p.outlets || '…'} outlets checked · ${p.withEmail || 0} reporters with a published address so far`;
+    meter = h('div', { class: 'meter' }, h('span', { style: `width:${p.outlets ? Math.round((p.outletsDone / p.outlets) * 100) : 5}%` }));
+  } else if (r.status === 'done') {
+    title = `${r.withEmail} reporters with published addresses`;
+    sub = `${r.reporters} bylines read across ${r.outlets} outlets, ${r.deskAddresses} desk addresses, ${r.pagesFetched} pages in ${r.seconds}s${r.blockedByRobots ? ` · ${r.blockedByRobots} pages skipped at the site’s request` : ''}. Saved to your directory.`;
+    action = c.jobs?.length ? null : h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => start(e.currentTarget) }, pro ? 'Re-check addresses' : 'Search again');
+  } else if (r.status === 'failed') {
+    title = 'Research could not finish'; sub = r.error || '';
+    action = h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => start(e.currentTarget) }, 'Try again');
+  } else {
+    title = 'Find the reporters who cover this'; sub = offline ? 'Needs internet access — research is off on this server.' : 'Relay reads recent bylines on this topic and collects addresses the outlets publish. Nothing is guessed.';
+    action = offline || c.jobs?.length ? null : h('button', { class: 'btn pri sm', type: 'button', onclick: (e) => start(e.currentTarget) }, 'Find journalists');
+  }
+  return h('div', { class: 'research', id: 'research-progress', style: 'margin:20px 0' },
+    h('div', {}, h('div', { class: 't' }, title), h('div', { class: 'small muted', style: 'margin-top:4px' }, sub), meter),
+    action);
+}
+
+const SOURCE_LABEL = { import: 'Your list', directory: 'Researched', 'directory-desk': 'Outlet desk', demo: 'Test desk' };
+const srcKey = (t) => (t.demo ? 'demo' : t.source || 'import');
+
 function media(c) {
   const ex = Object.entries(c.targeting.excluded).filter(([, v]) => v).map(([k, v]) => `${v} ${k.replace(/([A-Z])/g, ' $1').toLowerCase()}`).join(', ');
   return h('div', { class: 'stack' },
@@ -389,14 +441,15 @@ function media(c) {
       h('p', { class: 'muted', style: 'max-width:720px;margin:0' }, `${c.targets.length} reporters from ${c.targeting.poolSize} candidates, one per outlet, ranked by beat fit and recent coverage. Excluded: ${ex || 'none'}. Live news search: ${c.discovery.ok ? `${c.discovery.articleCount} recent articles${c.targeting.discovered ? `, ${c.targeting.discovered} outlets not in the database` : ''}` : c.discovery.reason || 'off'}.`),
       h('div', { class: 'row' }, h('a', { class: 'btn ghost sm', href: `/api/campaigns/${c.id}/media-list.csv`, download: 'media-list.csv' }, 'Export CSV'), h('a', { class: 'btn ghost sm', href: '#/contacts' }, 'Import contacts'),
         !c.jobs?.length ? h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => patch(c, { retarget: true }, e.currentTarget, 'Media list rebuilt') }, 'Rebuild') : null)),
-    c.targeting.demoUsed ? h('div', { class: 'banner' }, 'Outlet news desks with undeliverable .test addresses fill the list for testing. Import your own journalist contacts to go live.') : null,
+    researchPanel(c),
+    c.targeting.demoUsed ? h('div', { class: 'banner' }, 'Where no reporter is known yet, outlet news desks with undeliverable .test addresses fill the list for testing. Research or import contacts to go live.') : null,
     c.targeting.suggestions?.length ? h('section', { class: 'sec' }, h('h4', {}, 'Covered this recently — add a reporter', h('a', { href: '#/contacts' }, 'Import contacts →')),
       h('ul', { class: 'list' }, ...c.targeting.suggestions.map((x) => h('li', { style: 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px' },
         h('span', {}, h('span', { class: 'o', style: 'font-family:var(--serif);font-size:18px' }, x.outlet), x.article ? h('small', { class: 'muted', style: 'display:block' }, `“${x.article.title}”`) : null),
         h('span', { class: 'small muted' }, x.domain))))) : null,
     h('div', { class: 'tablewrap' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', {}, 'Outlet'), h('th', {}, 'Contact'), h('th', {}, 'Role'), h('th', {}, 'Fit'), h('th', {}, 'Why'))),
-      h('tbody', {}, ...c.targets.map((t) => h('tr', {}, h('td', {}, h('span', { class: 'o' }, t.outlet), h('div', { class: 'small muted' }, `tier ${t.tier}`)), h('td', {}, t.name, h('div', { class: 'small muted' }, t.email)),
+      h('tbody', {}, ...c.targets.map((t) => h('tr', {}, h('td', {}, h('span', { class: 'o' }, t.outlet), h('div', { class: 'small muted' }, `tier ${t.tier}`)), h('td', {}, t.name, h('div', { class: 'small muted' }, t.email), h('div', { class: 'src' }, badge(SOURCE_LABEL[srcKey(t)] || 'Contact', srcKey(t) === 'directory' ? 'ok' : ''), t.emailSource ? [' ', h('a', { href: t.emailSource, target: '_blank', rel: 'noopener' }, 'published here ↗')] : null)),
         h('td', {}, badge(t.role.replace(/_/g, ' ').replace(/exclusive backup (\d)/, 'backup $1'), t.role === 'exclusive' ? 'acc' : '')), h('td', { class: 'num' }, t.score), h('td', { class: 'muted small' }, t.reason)))))));
 }
 
@@ -488,6 +541,57 @@ async function viewContacts() {
         supp.length ? h('ul', { class: 'list small' }, ...supp.map((s) => h('li', {}, s.email, h('span', { class: 'muted' }, ` — ${s.reason.replace(/_/g, ' ')}`)))) : null))));
 }
 
+// ------------------------------------------------------------------ directory & plans
+
+const TOPIC_LABELS = {};
+async function viewDirectory() {
+  state.view = 'directory'; state.campaign = null; setNav('directory'); renderMode(); state.save = null;
+  knowledge ||= await api('knowledge').catch(() => ({ topics: [] }));
+  for (const t of knowledge.topics || []) TOPIC_LABELS[t.id] = t.label;
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const [stats, plan] = await Promise.all([api('directory/stats'), api('plan')]);
+  const data = await api(`directory?${params}`);
+  const pro = plan.current === 'pro';
+  const q = h('input', { type: 'search', value: params.get('q') || '', placeholder: 'Search reporters, outlets, topics…', 'aria-label': 'Search the directory' });
+  const topic = h('select', { 'aria-label': 'Topic' }, h('option', { value: '' }, 'All topics'), ...Object.entries(stats.topics).sort((a, b) => b[1] - a[1]).map(([k, n]) => h('option', { value: k, selected: params.get('topic') === k }, `${TOPIC_LABELS[k] || k} (${n})`)));
+  const go = () => { const p = new URLSearchParams(); if (q.value) p.set('q', q.value); if (topic.value) p.set('topic', topic.value); location.hash = `#/directory?${p}`; };
+  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
+  topic.addEventListener('change', go);
+  state.primary = { run: go };
+  const fig = (c, n, d) => h('div', { class: 'fig' }, h('div', { class: 'c' }, c), h('div', { class: 'n' }, fmt.n(n)), d ? h('div', { class: 'd' }, d) : null);
+  const hidden = data.total - data.rows.length;
+  render(
+    h('div', { class: 'mast' }, h('div', {}, h('div', { class: 'eyebrow' }, 'Research directory'), h('h1', {}, 'Journalists')),
+      pro ? h('a', { class: 'btn ghost', href: '/api/directory/export.csv', download: 'relay-directory.csv' }, 'Export CSV') : h('a', { class: 'lock', href: '#/plans' }, '🔒 Export is a Pro feature')),
+    h('div', { class: 'statrow' }, fig('Reporters', stats.journalists, 'found by your campaigns'), fig('With an address', stats.withEmail, 'published by their outlet'), fig('Outlets', stats.outlets), fig('Need re-checking', stats.stale, 'verified over 12 months ago')),
+    h('div', { class: 'row', style: 'margin:24px 0 8px' }, h('div', { style: 'flex:1;min-width:220px' }, q), h('div', { style: 'width:240px' }, topic)),
+    data.rows.length ? h('div', { class: 'tablewrap' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, 'Reporter'), h('th', {}, 'Address'), h('th', {}, 'Covers'), h('th', {}, 'Latest piece'), h('th', {}, ''))),
+      h('tbody', {}, ...data.rows.map((j) => h('tr', {},
+        h('td', {}, h('span', { class: 'o' }, j.name), h('div', { class: 'small muted' }, j.outlet)),
+        h('td', {}, j.email ? [h('div', {}, j.email.address), h('div', { class: 'src' }, `verified ${j.email.verifiedAt.slice(0, 10)} · `, h('a', { href: j.email.source, target: '_blank', rel: 'noopener' }, 'source ↗'))] : h('span', { class: 'muted small' }, 'No published address')),
+        h('td', { class: 'small muted' }, [...Object.keys(j.topics).map((t) => TOPIC_LABELS[t] || t), ...Object.keys(j.beats).slice(0, 3)].join(', ')),
+        h('td', { class: 'small' }, j.articles[0] ? h('a', { href: j.articles[0].url, target: '_blank', rel: 'noopener' }, j.articles[0].title.slice(0, 70)) : '—'),
+        h('td', {}, h('button', { class: 'link', type: 'button', title: 'Delete this person’s data and never collect it again', onclick: async () => { if (confirm(`Remove ${j.name} and never collect their address again?`)) { await api(`directory/journalists/${encodeURIComponent(j.id)}`, { method: 'DELETE' }); toast('Removed and suppressed'); viewDirectory(); } } }, 'Forget')))))))
+      : h('div', { class: 'empty' }, h('h2', {}, stats.journalists ? 'No matches' : 'Your directory is empty'), h('p', {}, stats.journalists ? 'Try another search.' : 'Build a campaign: Relay researches the reporters who cover your topic and keeps them here for next time.')),
+    hidden > 0 ? h('div', { class: 'banner', style: 'margin-top:20px' }, `${hidden} more reporters match. Pro shows the whole directory and reuses all of it in new campaigns. `, h('a', { href: '#/plans' }, 'See plans →')) : null,
+    h('p', { class: 'small muted', style: 'margin-top:20px' }, 'Only addresses the outlets publish themselves, each with its source. “Forget” deletes a person’s data and blocks it from being collected again.'));
+}
+
+async function viewPlans() {
+  state.view = 'plans'; state.campaign = null; setNav(''); renderMode(); state.save = null;
+  const plan = await api('plan');
+  const up = plan.upgradeUrl;
+  state.primary = { run: () => { if (up) location.href = up; } };
+  render(h('div', { class: 'mast' }, h('div', {}, h('div', { class: 'eyebrow' }, 'Plans'), h('h1', {}, 'More reporters, less searching'))),
+    h('div', { class: 'tiers' }, ...plan.plans.map((p) => h('section', { class: `tier${p.id === plan.current ? ' cur' : ''}` },
+      h('div', { class: 'eyebrow' }, p.id === plan.current ? 'Your plan' : p.price), h('h2', {}, p.label),
+      h('ul', {}, ...p.features.map((f) => h('li', {}, f))),
+      p.id === plan.current ? h('span', { class: 'badge ok', style: 'align-self:flex-start' }, 'Current plan')
+        : up ? h('a', { class: 'btn acc', href: up, target: '_blank', rel: 'noopener' }, `Upgrade to ${p.label}`)
+          : h('p', { class: 'small muted' }, 'To offer upgrades, the operator sets RELAY_UPGRADE_URL (e.g. a payment link) and RELAY_PLAN=pro for paying customers.')))));
+}
+
 // ------------------------------------------------------------------ command palette & shortcuts
 
 let overlay = null;
@@ -520,6 +624,9 @@ async function openPalette() {
   add('Go to', 'New campaign', () => { location.hash = '#/'; }, 'N');
   add('Go to', 'Campaigns', () => { location.hash = '#/campaigns'; }, 'C');
   add('Go to', 'Contacts', () => { location.hash = '#/contacts'; });
+  add('Go to', 'Journalist directory', () => { location.hash = '#/directory'; }, 'D');
+  add('Go to', 'Plans', () => { location.hash = '#/plans'; });
+  if (c && !c.jobs?.length) add('Actions', 'Find journalists for this campaign', () => api(`campaigns/${c.id}/research`, { method: 'POST', body: {} }).then(() => { toast('Researching journalists…'); location.hash = `#/c/${c.id}/media`; route(); }).catch((e) => toast(e.message)));
   add('Actions', 'Run a test with the sample brief', async () => { toast('Running the sample test…'); const r = await api('test-campaign', { method: 'POST', body: {} }); location.hash = `#/c/${r.id}/results`; });
   for (const x of state.list.slice(0, 12)) add('Campaigns', x.name, () => { location.hash = `#/c/${x.id}`; }, (STATUS[x.status] || [x.status])[0]);
   add('Preferences', 'Switch light / dark', toggleTheme);
@@ -563,6 +670,7 @@ function openShortcuts() {
       row('Campaign sections', '1', '2', '3', '4', '5'),
       row('New campaign', 'N'),
       row('Campaigns', 'C'),
+      row('Journalist directory', 'D'),
       row('Focus the news box', '/'),
       row('Close a dialog', 'Esc'),
       row('This list', '?'))));
@@ -586,6 +694,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === '?') { e.preventDefault(); openShortcuts(); }
   else if (e.key === 'n') { location.hash = '#/'; }
   else if (e.key === 'c') { location.hash = '#/campaigns'; }
+  else if (e.key === 'd') { location.hash = '#/directory'; }
   else if (e.key === '/' && state.view === 'new') { e.preventDefault(); $('#news')?.focus(); }
   else if (/^[1-5]$/.test(e.key) && state.campaign) { location.hash = `#/c/${state.campaign.id}/${TABS[Number(e.key) - 1][0]}`; }
 });
@@ -599,6 +708,8 @@ async function route() {
   if (kind === 'c' && id) return viewCampaign(id, tab);
   if (kind === 'campaigns') return viewCampaigns();
   if (kind === 'contacts') return viewContacts();
+  if (kind?.startsWith('directory')) return viewDirectory();
+  if (kind === 'plans') return viewPlans();
   return viewNew();
 }
 window.addEventListener('hashchange', () => { route(); window.scrollTo(0, 0); });

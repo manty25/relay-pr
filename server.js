@@ -16,6 +16,9 @@ import { newsroomRoot } from './src/distribute/newsroom.js';
 import { resolveLink, recordClick } from './src/distribute/tracking.js';
 import { llmAvailable, MODEL } from './src/generate/claude.js';
 import { TOPICS } from './src/knowledge/topics.js';
+import { runResearch, researchState, researchEnabled } from './src/engine/campaign.js';
+import { searchDirectory, directoryStats, forgetJournalist, directoryCsv } from './src/engine/directory.js';
+import { currentPlan, PLANS, upgradeUrl } from './src/plans.js';
 import { CHANNELS } from './src/knowledge/channels.js';
 
 const PORT = Number(process.env.PORT || 8787);
@@ -72,6 +75,7 @@ function status() {
     email: emailProvider(), testInbox: Boolean(process.env.RELAY_TEST_INBOX), social: socialAdapters(),
     discovery: process.env.RELAY_OFFLINE === '1' ? 'offline' : 'gdelt + google news',
     contacts: loadContacts().length, suppression: loadSuppression().length,
+    plan: currentPlan().id, research: researchEnabled() ? 'on' : 'off', directory: directoryStats(),
   };
 }
 
@@ -81,6 +85,22 @@ async function api(req, res, parts, url) {
   if (a === 'status' && m === 'GET') return send(res, 200, status());
   if (a === 'knowledge' && m === 'GET') return send(res, 200, { topics: TOPICS.map((t) => ({ id: t.id, label: t.label, wire: t.wire })), channels: CHANNELS, sample: SAMPLE_BRIEF });
   if (a === 'audit' && m === 'GET') return send(res, 200, readAudit(b ? (e) => e.campaignId === b : undefined, 300));
+
+  if (a === 'plan' && m === 'GET') return send(res, 200, { current: currentPlan().id, plans: Object.values(PLANS).map((p) => ({ ...p, research: p.research, directory: { ...p.directory, reusePerCampaign: Number.isFinite(p.directory.reusePerCampaign) ? p.directory.reusePerCampaign : null, browseLimit: Number.isFinite(p.directory.browseLimit) ? p.directory.browseLimit : null } })), upgradeUrl: upgradeUrl() });
+
+  if (a === 'directory') {
+    const plan = currentPlan();
+    if (m === 'GET' && b === 'stats') return send(res, 200, directoryStats());
+    if (m === 'GET' && b === 'export.csv') {
+      if (!plan.directory.export) throw new HttpError(402, 'Directory export is part of the Pro plan.');
+      return send(res, 200, directoryCsv(searchDirectory({ limit: Infinity }).rows), TYPES['.csv']);
+    }
+    if (m === 'GET' && !b) {
+      const r = searchDirectory({ q: url.searchParams.get('q') || '', beat: url.searchParams.get('beat') || '', topic: url.searchParams.get('topic') || '', limit: plan.directory.browseLimit });
+      return send(res, 200, { ...r, limit: Number.isFinite(plan.directory.browseLimit) ? plan.directory.browseLimit : null, plan: plan.id });
+    }
+    if (m === 'DELETE' && b === 'journalists' && c2) return send(res, forgetJournalist(decodeURIComponent(c2)) ? 200 : 404, { ok: true });
+  }
 
   if (a === 'test-campaign' && m === 'POST') {
     const body = await readBody(req);
@@ -109,7 +129,8 @@ async function api(req, res, parts, url) {
       try {
         const c = await createCampaign(body.brief || body, { discover: body.discover, useClaude: body.useClaude });
         exportCampaignFiles(c);
-        return send(res, 201, c);
+        if (researchEnabled() && body.research !== false) runResearch(c.id).catch((e) => console.error('research', e.message)); // background
+        return send(res, 201, { ...c, research: { status: researchEnabled() ? 'running' : 'off' } });
       } catch (e) { throw new HttpError(400, e.message); }
     }
     const camp = getCampaign(b);
@@ -120,6 +141,12 @@ async function api(req, res, parts, url) {
       if (c2 === 'approve' && m === 'POST') return send(res, 200, approveCampaign(camp, (await readBody(req)).by || 'operator'));
       if (c2 === 'launch' && m === 'POST') { const c = await launchCampaign(camp); return send(res, 200, c); }
       if (c2 === 'run-due' && m === 'POST') return send(res, 200, await runJobs(camp));
+      if (c2 === 'research' && m === 'GET') return send(res, 200, researchState(camp.id));
+      if (c2 === 'research' && m === 'POST') {
+        if (process.env.RELAY_OFFLINE === '1') throw new HttpError(400, 'Research needs internet access (RELAY_OFFLINE is set).');
+        runResearch(camp.id).catch((e) => console.error('research', e.message));
+        return send(res, 202, { status: 'running' });
+      }
       if (c2 === 'simulate' && m === 'POST') {
         if (camp.mode !== 'test') throw new HttpError(400, 'Simulation is only available for test campaigns.');
         const c = simulateOutcomes(camp); fs.writeFileSync(path.join(campaignDir(c.id), 'report.html'), reportHtml(c)); return send(res, 200, c);

@@ -21,21 +21,27 @@ function relevance(contactBeats, campaignBeats, specificBeats) {
   return { value: Math.min(1, matched.reduce((n, b) => n + weights[b], 0) / max), matched };
 }
 
+// Recent topical coverage. Outlet-level coverage counts towards the score, but a named reporter is only
+// ever credited with their *own* article in the pitch (never a colleague's).
 function recency(contact, articlesByDomain, terms, place) {
   const daysAgo = (d) => (d ? Math.max(0, Math.round((Date.now() - new Date(d).getTime()) / 86400000)) : 999);
-  let best = null;
+  const valueOf = (age) => (age <= 14 ? 1 : age <= 45 ? 0.7 : age <= 90 ? 0.4 : 0.25);
+  let outlet = null;
   for (const a of articlesByDomain.get(contact.domain) || []) {
     if (!aboutPlace(a, place)) continue;
     const age = daysAgo(a.date);
-    if (age <= maxAgeDays(place) && (!best || age < best.age)) best = { ...a, age };
+    if (age <= maxAgeDays(place) && (!outlet || age < outlet.age)) outlet = { ...a, age };
   }
+  const person = contact.source === 'import' || contact.source === 'directory';
+  let own = null;
   const ra = contact.recentArticle;
-  if (ra?.title && terms.some((t) => ra.title.toLowerCase().includes(t))) {
-    const age = daysAgo(ra.date);
-    if (!best || age < best.age) best = { title: ra.title, url: ra.url, date: ra.date, age: age === 999 ? 30 : age };
+  if (ra?.title && (contact.source === 'directory' || terms.some((t) => ra.title.toLowerCase().includes(t))) && aboutPlace(ra, place)) {
+    const age = ra.date ? daysAgo(ra.date) : 30;
+    if (age <= maxAgeDays(place)) own = { title: ra.title, url: ra.url, date: ra.date, age };
   }
+  const best = [own, outlet].filter(Boolean).sort((a, b) => a.age - b.age)[0];
   if (!best) return { value: 0, article: null };
-  return { value: best.age <= 14 ? 1 : best.age <= 45 ? 0.7 : best.age <= 90 ? 0.4 : 0.25, article: best };
+  return { value: valueOf(best.age), article: person ? own : best };
 }
 
 // Sites that show up in news search but are not pitchable outlets.
@@ -124,12 +130,16 @@ export function buildTargets({ brief, cls, nw, flags, discovery, contacts = [], 
     if (!tierW[c.tier]) { excluded.tier++; continue; }
     if (c.region === 'local' && !brief.city) { excluded.local++; continue; }
     const regionFit = c.region === brief.region || c.region === 'global' || c.region === 'local' ? 1 : 0.6;
-    const score = Math.round(100 * (0.45 * rel.value + 0.25 * rec.value + 0.2 * tierW[c.tier] + 0.1 * regionFit));
+    // A named reporter beats a desk address, which beats a test desk (still one per outlet, TG-2).
+    const personBonus = c.source === 'import' || c.source === 'directory' ? 3 : c.source === 'directory-desk' ? 1 : 0;
+    const score = Math.round(100 * (0.45 * rel.value + 0.25 * rec.value + 0.2 * tierW[c.tier] + 0.1 * regionFit)) + personBonus;
+    const fitScore = Math.min(100, score);
     const reasons = [c.discovered ? 'found by live news search' : `beat: ${rel.matched.slice(0, 3).join(', ')}`];
+    if (c.source === 'directory') reasons.unshift('researched reporter');
     if (rec.article) reasons.push(`covered “${rec.article.title.slice(0, 70)}” ${rec.article.age}d ago`);
     reasons.push(`tier ${c.tier}`);
     scored.push({
-      ...c, score, relevance: Math.round(rel.value * 100) / 100, recentArticle: rec.article || c.recentArticle || null,
+      ...c, score: fitScore, relevance: Math.round(rel.value * 100) / 100, recentArticle: rec.article || c.recentArticle || null,
       matchedBeats: rel.matched, reason: reasons.join(' · '),
       timezone: c.timezone || REGION_TZ[c.region] || brief.timezone,
     });

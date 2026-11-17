@@ -58,6 +58,24 @@ kbd, .kbd { font: 500 11px var(--mono); color: inherit; opacity: .75; border: 1p
 .mode.live { background: var(--err-soft); color: var(--err); }
 .mode:before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 
+.planchip { font-size: 12px; color: var(--mut); text-decoration: none; white-space: nowrap; }
+.planchip b { color: var(--ink); font-weight: 600; }
+.planchip:hover { color: var(--ink); }
+.research { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 16px 18px; background: var(--card); border: 1px solid var(--rule); box-shadow: var(--shadow); }
+.research .t { font-family: var(--serif); font-size: 22px; line-height: 1.2; }
+.research .meter { margin-top: 10px; height: 3px; }
+.src { font-size: 12px; color: var(--mut); }
+.src a { color: var(--mut); }
+.tiers { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 28px; }
+.tier { background: var(--card); border: 1px solid var(--rule); padding: 28px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 14px; }
+.tier.cur { border-color: var(--ink); }
+.tier h2 { font-size: 40px; line-height: 1; }
+.tier ul { margin: 0; padding: 0; list-style: none; border-top: 1px solid var(--rule); }
+.tier li { padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 14px; color: var(--ink2); display: grid; grid-template-columns: 20px 1fr; }
+.tier li:before { content: "✓"; color: var(--ok); }
+.lock { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; color: var(--mut); }
+.statrow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-bottom: 1px solid var(--rule); margin-top: 24px; }
+
 /* ---------- layout ---------- */
 main { min-height: calc(100vh - 64px); }
 .page { max-width: 1340px; margin: 0 auto; padding: 40px clamp(16px, 4vw, 48px) 80px; }
@@ -234,11 +252,14 @@ input[type=search]::-webkit-search-cancel-button { appearance: none; }
   .nav { grid-template-columns: auto 1fr; }
   .links { display: none; }
   .navr .kbtn span.l { display: none; }
+  .planchip { display: none; }
   .page { padding-top: 24px; }
   .figs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fig:nth-child(3) { padding-left: 0; border-left: 0; }
   .fig:nth-child(n+3) { border-top: 1px solid var(--rule); }
-  .cols2, .fields { grid-template-columns: minmax(0, 1fr); }
+  .cols2, .fields, .tiers { grid-template-columns: minmax(0, 1fr); }
+  .statrow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .research { grid-template-columns: minmax(0, 1fr); }
   .plan li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .doc { padding: 20px; }
   .tabs a kbd { display: none; }

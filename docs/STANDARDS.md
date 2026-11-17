@@ -104,7 +104,23 @@ without losing the things journalists actually reward (relevance, accuracy, brev
 | OP-12 | **Crisis mode:** no wire, no promotional social copy, no exclusives; a factual holding statement on the newsroom and direct replies to reporters already covering the story. |
 | OP-13 | Open tracking is off (privacy, and Apple Mail Privacy Protection makes it unreliable). Click tracking uses first-party redirect links with UTM tags. |
 
-## 8. Measurement standards (ME)
+## 8. Journalist research standards (RS)
+
+Relay researches the reporters who cover a topic and collects their professional contact details. This is the
+same kind of processing media databases do; these rules keep it lawful and respectful.
+
+| ID | Standard |
+|----|----------|
+| RS-1 | **Published addresses only.** An address is kept only if the outlet publishes it on its own site (author page, contact, tips or masthead page) or as the article's byline link. Relay never guesses patterns (first.last@…), never probes mail servers to "verify" an address, and never logs in or bypasses a paywall. |
+| RS-2 | **Polite crawling.** Respect robots.txt, identify as `RelayBot` with a contact URL, wait between requests to the same site, stay within a per-campaign page budget, and stop on errors. |
+| RS-3 | **Provenance.** Every address stores the page it was published on and when it was found or last verified; the UI links to it. |
+| RS-4 | **Transparency (GDPR Art. 14).** The first message to a researched contact says where their address was found, next to the opt-out. |
+| RS-5 | **Objection and erasure.** Opt-outs apply everywhere. "Forget" deletes a person's record and suppresses their addresses so research never collects them again. |
+| RS-6 | **Freshness.** Addresses not verified in 12 months must be re-checked before a live send (compliance gate). |
+| RS-7 | **Your lists stay yours.** Imported contact lists are kept separate from the research directory and never merged into it. |
+| RS-8 | **Professional data only.** Name, outlet, role, work address, public professional profiles and articles. No personal phone numbers, home addresses or personal email providers; no advertising, sales or subscription addresses. |
+
+## 9. Measurement standards (ME)
 
 | ID | Standard |
 |----|----------|
@@ -114,7 +130,7 @@ without losing the things journalists actually reward (relevance, accuracy, brev
 | ME-4 | Key-message pull-through = share of placements that contain each key message. |
 | ME-5 | Any simulated data (test campaigns) is labelled **SIMULATED** on every chart and table where it appears. |
 
-## 9. Performance targets (SLO)
+## 10. Performance targets (SLO)
 
 | ID | Target |
 |----|--------|

@@ -11,6 +11,13 @@ export function defaultOpener(t) {
   return `Since you cover ${beat.replace(/-/g, ' ')} for ${t.outlet}, I thought this would be useful.`;
 }
 
+// RS-4: a researched address says where it was published (GDPR Art. 14 notice) alongside the opt-out.
+const hostOf = (u) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } };
+export function optOutLine(t) {
+  const base = 'Not a fit for your beat? Reply “no thanks” and I won’t pitch you again.';
+  return t.emailSource && /^directory/.test(t.source || '') ? `${base} (I found your address on ${hostOf(t.emailSource)}.)` : base;
+}
+
 export function pitchFor({ target, kind, core, brief, launchAt, exclusiveDeadline, opener, newsroomUrl }) {
   const tz = target.timezone || brief.timezone;
   const launch = new Date(launchAt);
@@ -44,7 +51,7 @@ export function pitchFor({ target, kind, core, brief, launchAt, exclusiveDeadlin
     sender,
     `${brief.org} · ${brief.contact.email}`,
     '',
-    'Not a fit for your beat? Reply “no thanks” and I won’t pitch you again.',
+    optOutLine(target),
   ].filter((x) => x !== null).join('\n');
   return { subject, body, kind };
 }

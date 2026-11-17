@@ -6,6 +6,9 @@ import { discoverCoverage, topicQuery, findMentions } from './discovery.js';
 import { buildTargets } from './targeting.js';
 import { runQa } from './qa.js';
 import { loadContacts, loadSuppression, loadHistory, suppress, recordPitch, markReplied } from './contacts.js';
+import { contactsForCampaign, deskContactsForCampaign, mergeResearch } from './directory.js';
+import { researchJournalists } from './research.js';
+import { currentPlan } from '../plans.js';
 import { writeOffline, quoteParagraph } from '../generate/offline.js';
 import { llmAvailable, writeWithClaude, repairWithClaude, MODEL } from '../generate/claude.js';
 import { pitchFor, followUpFor, releaseText, wirePackage, newsroomHtml, defaultOpener } from '../generate/compose.js';
@@ -70,15 +73,71 @@ export async function createCampaign(input, opts = {}) {
 
 function retarget(c, disc) {
   const cls = { ...c.analysis };
+  const discovery = disc || { articles: c.discovery?.sample || [], query: c.discovery?.query };
   const { targets, excluded, poolSize, demoUsed, discovered, suggestions } = buildTargets({
     brief: c.brief, cls, nw: c.analysis.newsworthiness, flags: c.plan.flags,
-    discovery: disc || { articles: c.discovery?.sample || [], query: c.discovery?.query },
-    contacts: loadContacts(), includeDemo: c.mode === 'test', campaignId: c.id,
+    discovery,
+    contacts: campaignContacts(c, discovery), includeDemo: c.mode === 'test', campaignId: c.id,
     suppression: loadSuppression(), history: loadHistory(),
   });
   c.targets = targets;
   c.targeting = { excluded, poolSize, demoUsed, count: targets.length, discovered, suggestions };
 }
+
+// Your own list first, then reporters and desks from the research directory (plan-limited reuse).
+function campaignContacts(c, discovery) {
+  const own = loadContacts();
+  const seen = new Set(own.map((x) => x.email.toLowerCase()));
+  const q = { beats: c.analysis.beats, topicId: c.analysis.topic.id, terms: discovery?.query?.terms || [], place: discovery?.query?.local || '' };
+  const dir = [...contactsForCampaign({ ...q, limit: currentPlan().directory.reusePerCampaign }), ...deskContactsForCampaign(q)]
+    .filter((x) => !seen.has(x.email.toLowerCase()) && seen.add(x.email.toLowerCase()));
+  return [...own, ...dir];
+}
+
+// ---------------------------------------------------------------- journalist research (background job)
+
+const researchJobs = new Map();
+export function researchState(cid) {
+  const job = researchJobs.get(cid);
+  if (job?.status === 'running') return job;
+  return loadCampaign(cid)?.research || { status: 'idle' };
+}
+
+export async function runResearch(cid, { fetchImpl, delayMs } = {}) {
+  if (researchJobs.get(cid)?.status === 'running') return researchJobs.get(cid);
+  const c = loadCampaign(cid);
+  if (!c) throw new Error('Campaign not found');
+  const plan = currentPlan();
+  const job = { status: 'running', startedAt: new Date().toISOString(), progress: { outletsDone: 0, outlets: 0, journalists: 0, withEmail: 0 }, plan: plan.id };
+  researchJobs.set(cid, job);
+  try {
+    const discovery = { articles: c.discovery?.sample || [], query: c.discovery?.query };
+    const res = await researchJournalists({ brief: c.brief, cls: c.analysis, discovery, targets: c.targets, plan, fetchImpl, delayMs, onProgress: (p) => { job.progress = p; } });
+    mergeResearch(res, { campaignId: cid, topicId: c.analysis.topic.id, beats: c.analysis.specificBeats?.length ? c.analysis.specificBeats : c.analysis.beats, terms: discovery.query?.terms || [], region: c.brief.region });
+    const fresh = loadCampaign(cid);
+    fresh.research = {
+      status: 'done', plan: plan.id, startedAt: job.startedAt, finishedAt: new Date().toISOString(), ...res.stats, log: res.log,
+      found: res.journalists.map((j) => ({ name: j.name, outlet: j.outlet, email: j.emails[0]?.address || '', source: j.emails[0]?.source || '', article: j.articles[0] || null })),
+    };
+    if (!fresh.jobs?.length) {
+      const before = fresh.targets.map((t) => t.email).join();
+      retarget(fresh, discovery); reassemble(fresh);
+      if (fresh.approvedAt && before !== fresh.targets.map((t) => t.email).join()) { fresh.approvedAt = null; fresh.status = 'ready'; } // DS-2: list changed
+    }
+    saveCampaign(fresh);
+    audit({ campaignId: cid, action: 'research', ...res.stats });
+    researchJobs.delete(cid);
+    return fresh.research;
+  } catch (e) {
+    const fresh = loadCampaign(cid);
+    fresh.research = { status: 'failed', error: e.message, finishedAt: new Date().toISOString() };
+    saveCampaign(fresh);
+    researchJobs.delete(cid);
+    return fresh.research;
+  }
+}
+
+export const researchEnabled = () => process.env.RELAY_OFFLINE !== '1' && process.env.RELAY_AUTO_RESEARCH !== '0';
 
 // ---------------------------------------------------------------- assets
 
