@@ -162,3 +162,27 @@ test('TG-3: outlets that just covered the topic are added; unknown ones get no e
   assert.ok(c.targeting.suggestions.some((s) => s.outlet === 'Spoke Weekly'), 'live mode lists it as "add a reporter"');
   process.env.RELAY_OFFLINE = '1';
 });
+
+test('local stories only count coverage about the same place; foreign country domains are skipped', async () => {
+  delete process.env.RELAY_OFFLINE;
+  const d = new Date().toUTCString();
+  const item = (t, src) => `<item><title>${t}</title><link>https://news.google.com/x</link><pubDate>${d}</pubDate><source url="${src}">${new URL(src).hostname}</source></item>`;
+  const rss = `<?xml version="1.0"?><rss><channel>
+${item('Kettering Health expands urgent care in Dayton - Dayton Daily News', 'https://www.daytondailynews.example')}
+${item('Orlando Health opens freestanding ER - Leesburg Daily Commercial', 'https://www.dailycommercial.example')}
+${item('SwiftMed opens care clinics in Lagos - The Nation', 'https://thenationonlineng.ng')}
+${item('New urgent care opens in Daytona - News-Journal', 'https://www.news-journal.example')}
+</channel></rss>`;
+  let query = '';
+  const fakeFetch = async (url) => { if (String(url).includes('news.google')) query = decodeURIComponent(String(url)); return String(url).includes('gdelt') ? new Response('{"articles":[]}') : new Response(rss); };
+  const { createCampaign } = await import('../src/index.js');
+  const c = await createCampaign({ news: 'Brightwater Health opens a 24-hour urgent care clinic in Dayton that will create 45 jobs.', org: 'Brightwater Health' }, { now: FIXED_NOW, fetchImpl: fakeFetch });
+  assert.match(query, /"Dayton"/, 'search is scoped to the place');
+  const outlets = c.targets.map((t) => t.domain);
+  assert.ok(outlets.includes('daytondailynews.example'), 'local paper that covered Dayton is targeted');
+  assert.ok(!outlets.includes('dailycommercial.example'), 'out-of-area paper is not');
+  assert.ok(!outlets.includes('thenationonlineng.ng'), 'foreign country domain is not');
+  assert.ok(!outlets.includes('news-journal.example'), '"Daytona" is not "Dayton"');
+  assert.ok(!outlets.includes('local-paper.example'), 'placeholder desks drop out once real local outlets are found');
+  process.env.RELAY_OFFLINE = '1';
+});

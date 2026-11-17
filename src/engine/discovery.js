@@ -64,15 +64,21 @@ export async function googleNewsSearch(query, { region = 'US', lang = 'en', fetc
 }
 
 // Builds a topical query from the brief: key nouns + beats, excluding the org itself.
+const LOCAL_TOPICS = new Set(['local', 'event', 'nonprofit']);
+export const isLocalStory = (brief, cls) => Boolean(brief.city) && (LOCAL_TOPICS.has(cls.topic?.id) || (cls.specificBeats || []).includes('local'));
+
 export function topicQuery(brief, cls) {
-  const stop = new Set('the a an and or of for to in on with by at from as is are its it this that new today launches launched announces announced unveils introduces will has have their our we us'.split(' '));
-  const orgWords = new Set(brief.org.toLowerCase().split(/\s+/));
+  const stop = new Set('the a an and or of for to in on with by at from as is are its it this that new today launches launched announces announced unveils introduces will has have their our we us opens open'.split(' '));
+  const skip = new Set([...brief.org.toLowerCase().split(/\s+/), ...String(brief.city || '').toLowerCase().split(/\s+/)]);
   const words = brief.news.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/)
-    .filter((w) => w.length > 3 && !stop.has(w) && !orgWords.has(w) && !/^\d/.test(w));
+    .filter((w) => w.length > 3 && !stop.has(w) && !skip.has(w) && !/^\d/.test(w));
   const freq = {};
   for (const w of words) freq[w] = (freq[w] || 0) + 1;
   const terms = Object.keys(freq).sort((a, b) => freq[b] - freq[a]).slice(0, 4);
-  return { terms, gdelt: terms.length ? `(${terms.map((t) => `"${t}"`).join(' OR ')})` : cls.beats[0], news: terms.slice(0, 3).join(' ') };
+  const gdelt = terms.length ? `(${terms.map((t) => `"${t}"`).join(' OR ')})` : cls.beats[0];
+  // Local stories are only news to local press: search within the place, and remember it for filtering.
+  if (isLocalStory(brief, cls)) return { terms, local: brief.city, gdelt: `${gdelt} "${brief.city}"`, news: `${terms.slice(0, 2).join(' ')} "${brief.city}"` };
+  return { terms, gdelt, news: terms.slice(0, 3).join(' ') };
 }
 
 export async function discoverCoverage(brief, cls, opts = {}) {

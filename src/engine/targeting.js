@@ -21,12 +21,13 @@ function relevance(contactBeats, campaignBeats, specificBeats) {
   return { value: Math.min(1, matched.reduce((n, b) => n + weights[b], 0) / max), matched };
 }
 
-function recency(contact, articlesByDomain, terms) {
+function recency(contact, articlesByDomain, terms, place) {
   const daysAgo = (d) => (d ? Math.max(0, Math.round((Date.now() - new Date(d).getTime()) / 86400000)) : 999);
   let best = null;
   for (const a of articlesByDomain.get(contact.domain) || []) {
+    if (!aboutPlace(a, place)) continue;
     const age = daysAgo(a.date);
-    if (age <= 90 && (!best || age < best.age)) best = { ...a, age };
+    if (age <= maxAgeDays(place) && (!best || age < best.age)) best = { ...a, age };
   }
   const ra = contact.recentArticle;
   if (ra?.title && terms.some((t) => ra.title.toLowerCase().includes(t))) {
@@ -34,20 +35,34 @@ function recency(contact, articlesByDomain, terms) {
     if (!best || age < best.age) best = { title: ra.title, url: ra.url, date: ra.date, age: age === 999 ? 30 : age };
   }
   if (!best) return { value: 0, article: null };
-  return { value: best.age <= 14 ? 1 : best.age <= 45 ? 0.7 : 0.4, article: best };
+  return { value: best.age <= 14 ? 1 : best.age <= 45 ? 0.7 : best.age <= 90 ? 0.4 : 0.25, article: best };
 }
 
 // Sites that show up in news search but are not pitchable outlets.
 const NOT_OUTLETS = /(^|\.)(news\.google\.com|youtube\.com|reddit\.com|facebook\.com|instagram\.com|tiktok\.com|x\.com|twitter\.com|linkedin\.com|amazon\.[a-z.]+|ebay\.[a-z.]+|wikipedia\.org|medium\.com|substack\.com|msn\.com|apple\.news)$/i;
 const MAX_DISCOVERED = 15;
 
+// Country-code domains outside the campaign's region (e.g. a .ng paper for a US launch) are skipped.
+const GENERIC_CC = new Set(['co', 'io', 'ai', 'tv', 'me', 'fm', 'ly', 'news']);
+const REGION_CC = { us: ['us'], uk: ['uk'], ca: ['ca'], au: ['au'], fi: ['fi'], de: ['de'], fr: ['fr'], se: ['se'], in: ['in'], sg: ['sg'], jp: ['jp'] };
+function inRegion(domain, region) {
+  const tld = domain.split('.').pop();
+  if (tld.length !== 2 || GENERIC_CC.has(tld) || region === 'eu') return true;
+  return (REGION_CC[region] || []).includes(tld);
+}
+// For local stories, coverage only counts if it is about the same place.
+const aboutPlace = (a, place) => !place || new RegExp(`\\b${place.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(`${a.title} ${a.outlet || ''}`);
+// Local beats move slowly: a reporter who covered the same local topic this year is still the right one.
+const maxAgeDays = (place) => (place ? 365 : 90);
+const PLACEHOLDER_DOMAINS = new Set(['local-tv.example', 'local-paper.example']);
+
 // Outlets found by live news search that are not in the seed database (TG-3: recent topical coverage).
-function discoveredOutlets(articlesByDomain, known) {
+function discoveredOutlets(articlesByDomain, known, { region, place }) {
   const now = Date.now();
   const out = [];
   for (const [domain, arts] of articlesByDomain) {
-    if (!domain || known.has(domain) || findOutlet(domain) || NOT_OUTLETS.test(domain)) continue;
-    const recent = arts.filter((a) => !a.date || now - new Date(a.date).getTime() <= 90 * 86400000);
+    if (!domain || known.has(domain) || findOutlet(domain) || NOT_OUTLETS.test(domain) || !inRegion(domain, region)) continue;
+    const recent = arts.filter((a) => (!a.date || now - new Date(a.date).getTime() <= maxAgeDays(place) * 86400000) && aboutPlace(a, place));
     if (!recent.length) continue;
     const name = recent.find((a) => a.outlet)?.outlet || domain;
     out.push({ name, domain, tier: 3, reach: 's', region: 'global', beats: [], latest: recent.map((a) => a.date || '').sort().pop() });
@@ -77,7 +92,9 @@ export function buildTargets({ brief, cls, nw, flags, discovery, contacts = [], 
     for (const o of OUTLETS) if (!covered.has(o.domain)) pool.push({ ...demoDeskContact(o), reach: o.reach, region: o.region });
   }
   // Newly discovered outlets: test desks in test mode; in live mode they become "add a reporter" suggestions.
-  const found = discoveredOutlets(articlesByDomain, covered);
+  const place = discovery?.query?.local || '';
+  const found = discoveredOutlets(articlesByDomain, covered, { region: brief.region, place });
+  if (place && found.length) for (let i = pool.length - 1; i >= 0; i--) if (PLACEHOLDER_DOMAINS.has(pool[i].domain)) pool.splice(i, 1);
   const suggestions = [];
   for (const o of found) {
     if (includeDemo) pool.push({ ...demoDeskContact(o), reach: o.reach, region: o.region, discovered: true });
@@ -94,13 +111,14 @@ export function buildTargets({ brief, cls, nw, flags, discovery, contacts = [], 
   const scored = [];
   for (const c of pool) {
     const rel = relevance(c.beats, cls.beats, cls.specificBeats || []);
-    const rec = recency(c, articlesByDomain, terms);
+    const rec = recency(c, articlesByDomain, terms, place);
     // Covering this exact topic in the last 90 days is the strongest relevance signal there is (TG-3),
     // even when the outlet's listed beats don't match (e.g. a national paper reviewing folding bikes).
     if (rec.article) { rel.value = Math.max(rel.value, 0.6); if (!rel.matched.length) rel.matched = ['this topic']; }
     // When the story has specific beats, a single generic beat match (e.g. only "tech") is not relevant enough.
     const minRel = (cls.specificBeats || []).length ? Math.max(MIN_RELEVANCE, 0.3) : MIN_RELEVANCE;
     if (rel.value < minRel || !rel.matched.length) { excluded.offBeat++; continue; }
+    if (place && !rec.article && !c.beats.some((b) => topic.beats.includes(b))) { excluded.offBeat++; continue; }
     if (isSuppressed(c.email, suppression)) { excluded.suppressed++; continue; }
     if (pitchedRecently(c.email, campaignId, 30, history)) { excluded.recentlyPitched++; continue; }
     if (!tierW[c.tier]) { excluded.tier++; continue; }
