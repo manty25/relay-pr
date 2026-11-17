@@ -154,6 +154,7 @@ export function createServer() {
         return res.end();
       }
       if (parts[1] === 'newsroom') return serveFile(res, newsroomRoot(), parts.slice(2).join('/') || '');
+      if (url.pathname === '/healthz') return send(res, 200, { ok: true }); // public, for the host's health checks
       if (!authorized(req)) { res.writeHead(401, { 'www-authenticate': 'Basic realm="Relay"' }); return res.end('Authentication required'); }
       if (parts[1] === 'api') return await api(req, res, parts, url);
       return serveFile(res, PUBLIC, url.pathname === '/' ? 'index.html' : url.pathname.slice(1));
@@ -175,7 +176,14 @@ export function startScheduler(intervalMs = 60_000) {
   }, intervalMs);
 }
 
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1']);
+
 export function start({ port = PORT, host = HOST } = {}) {
+  // Never expose campaigns, contacts and send controls to the internet without a password.
+  if (!LOOPBACK.has(host) && !process.env.RELAY_PASSWORD) {
+    console.error(`Refusing to listen on ${host} without RELAY_PASSWORD. Set a password, or run on 127.0.0.1.`);
+    process.exit(1);
+  }
   const server = createServer().listen(port, host, () => {
     const st = status();
     console.log(`Relay running at http://${host === '0.0.0.0' ? 'localhost' : host}:${port}`);

@@ -1,0 +1,29 @@
+# Render Blueprint: one always-on web service with a persistent disk for campaign data.
+# Deploy: Render dashboard → New → Blueprint → pick this repository.
+# Reference: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: relay-pr
+    runtime: node
+    plan: starter            # always on; the free plan sleeps and has no disk
+    branch: main
+    autoDeploy: true         # every push to main redeploys
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /healthz
+    disk:
+      name: relay-data
+      mountPath: /var/data
+      sizeGB: 1              # can be increased later, never decreased
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: HOST
+        value: 0.0.0.0
+      - key: RELAY_DATA_DIR
+        value: /var/data
+      # Asked for in the dashboard when the Blueprint is created; never stored in this file.
+      - key: RELAY_PASSWORD   # protects the app; newsroom pages and tracked links stay public
+        sync: false
+      - key: ANTHROPIC_API_KEY  # optional: Claude writes the copy
+        sync: false

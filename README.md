@@ -72,6 +72,25 @@ the next step (approve and run the test, launch, view results).
 
 The design follows the "Editorial" direction in `design/options/` (light and dark themes, self-hosted fonts).
 
+## Deploy online (Render)
+
+The repository includes a Render Blueprint (`render.yaml`): one always-on web service with a 1 GB
+persistent disk for campaign data, HTTPS, and automatic redeploys on every push to `main`.
+
+1. Create an account at [render.com](https://render.com) and connect GitHub (grant access to `relay-pr`).
+2. Dashboard → **New → Blueprint** → choose `relay-pr` → **Apply**.
+3. When asked, enter **`RELAY_PASSWORD`** (required) and, optionally, **`ANTHROPIC_API_KEY`**.
+4. Open the address Render gives you (e.g. `https://relay-pr.onrender.com`). Sign in with any username and the
+   password you set.
+
+Cost: the Starter instance (about $7/month) plus about $0.25/month for the disk — check Render's current
+pricing. The free plan is not suitable: it sleeps when idle and has no disk, so campaigns would be lost.
+
+Newsroom pages (`/newsroom/…`), tracked links (`/r/…`) and the health check (`/healthz`) stay public; everything
+else needs the password. Relay refuses to start on a public address without `RELAY_PASSWORD`. Links use
+Render's address automatically; set `RELAY_PUBLIC_URL` if you add your own domain. Email-provider and social
+keys for live campaigns go in the service's **Environment** tab (see the table below).
+
 ## Configuration (all optional)
 
 | Variable | Effect |
@@ -82,11 +101,11 @@ The design follows the "Editorial" direction in `design/options/` (light and dar
 | `RELAY_TEST_INBOX` | In test mode, also send every pitch to this address only (subject shows the intended recipient). |
 | `BLUESKY_HANDLE` + `BLUESKY_APP_PASSWORD`, `MASTODON_URL` + `MASTODON_TOKEN` | Live social posting. |
 | `RELAY_SOCIAL_WEBHOOK` | Post LinkedIn/X/Threads through Zapier, Make, n8n or Typefully. |
-| `RELAY_PUBLIC_URL` | Public base URL for newsroom pages and tracked links. |
+| `RELAY_PUBLIC_URL` | Public base URL for newsroom pages and tracked links (defaults to Render's address on Render). |
 | `RELAY_NEWSROOM_DIR` | Mirror the newsroom (HTML, RSS, sitemap, llms.txt) into a static-site folder on live publish. |
 | `RELAY_OFFLINE=1` | Skip live media discovery (GDELT + Google News). |
 | `NODE_USE_ENV_PROXY=1` | Needed only behind an HTTPS proxy (corporate networks, some cloud sandboxes): Node's built-in fetch ignores `HTTPS_PROXY` without it (Node ≥ 22.21). Without it, discovery silently falls back to the built-in outlet list. |
-| `RELAY_PASSWORD` | Basic-auth password for the app when exposed beyond localhost (`HOST=0.0.0.0`). |
+| `RELAY_PASSWORD` | Password for the app (any username). Required when listening beyond localhost, e.g. `HOST=0.0.0.0`. |
 | `RELAY_MAX_EMAILS_PER_HOUR` | Live throttle (default 20). |
 
 ## Going live

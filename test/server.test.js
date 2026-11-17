@@ -76,3 +76,16 @@ test('invalid input returns 400, unknown campaign 404', async () => {
   assert.equal((await j('/api/campaigns', { method: 'POST', body: JSON.stringify({ brief: { news: '' } }) })).status, 400);
   assert.equal((await j('/api/campaigns/cmp_nope')).status, 404);
 });
+
+test('with a password set: app and API need it; /healthz, newsroom and tracked links stay public', async () => {
+  process.env.RELAY_PASSWORD = 's3cret-pass';
+  try {
+    assert.equal((await fetch(`${base}/healthz`)).status, 200);
+    assert.equal((await fetch(`${base}/`)).status, 401);
+    assert.equal((await fetch(`${base}/api/campaigns`)).status, 401);
+    const auth = { authorization: 'Basic ' + Buffer.from('relay:s3cret-pass').toString('base64') };
+    assert.equal((await fetch(`${base}/api/campaigns`, { headers: auth })).status, 200);
+    assert.equal((await fetch(`${base}/api/campaigns`, { headers: { authorization: 'Basic ' + Buffer.from('relay:wrong').toString('base64') } })).status, 401);
+    assert.notEqual((await fetch(`${base}/newsroom/`)).status, 401);
+  } finally { delete process.env.RELAY_PASSWORD; }
+});

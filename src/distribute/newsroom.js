@@ -5,7 +5,8 @@ import path from 'node:path';
 import { dataDir, writeText, readJson, writeJson, audit } from '../store.js';
 import { escapeHtml, slug } from '../util.js';
 
-export const publicBase = () => (process.env.RELAY_PUBLIC_URL || `http://localhost:${process.env.PORT || 8787}`).replace(/\/$/, '');
+// RENDER_EXTERNAL_URL is set automatically on Render, so links work there without configuration.
+export const publicBase = () => (process.env.RELAY_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `http://localhost:${process.env.PORT || 8787}`).replace(/\/$/, '');
 export const newsroomRoot = () => path.join(dataDir(), 'newsroom');
 
 export function releasePath(campaign) {
