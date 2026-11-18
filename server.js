@@ -22,7 +22,8 @@ import { currentPlan, PLANS, upgradeUrl } from './src/plans.js';
 import { apolloEnabled, apolloCap } from './src/engine/apollo.js';
 import { listPeople, allTags, peopleStats, tagPeople, removePerson, personById, personKeyOf, fitFor } from './src/engine/people.js';
 import { rolesAllowed } from './src/engine/campaign.js';
-import { ensureOutletProfile, ensureRecentArticles, articlesFor, outletProfile } from './src/engine/profiles.js';
+import { ensureOutletProfile, ensureRecentArticles, articlesFor, outletProfile, startArticleBackfill, backfillStatus } from './src/engine/profiles.js';
+import { allPeople } from './src/engine/people.js';
 import { csvEscape } from './src/util.js';
 import { CHANNELS } from './src/knowledge/channels.js';
 
@@ -146,6 +147,17 @@ async function api(req, res, parts, url) {
       for (const p of rows) lines.push([p.name, p.email, p.outlet, p.domain, p.sources.join(';'), p.tags.join(';'), p.beats.join(';'), p.latestArticle?.title, p.emailSource].map(csvEscape).join(','));
       return send(res, 200, lines.join('\n') + '\n', TYPES['.csv']);
     }
+    // Latest articles for everyone (background job).
+    if (b === 'articles' && m === 'GET') {
+      const missing = allPeople().filter((p) => !p.doNotContact && !p.checkedAt).length;
+      return send(res, 200, { ...backfillStatus(), missing, enabled: process.env.RELAY_OFFLINE !== '1' });
+    }
+    if (b === 'articles' && m === 'POST') {
+      if (process.env.RELAY_OFFLINE === '1') throw new HttpError(400, 'Finding articles needs internet access (RELAY_OFFLINE is set).');
+      const body = await readBody(req);
+      startArticleBackfill(allPeople, { force: Boolean(body.force) }).catch((e) => console.error('articles', e.message));
+      return send(res, 202, backfillStatus());
+    }
     if (m === 'POST' && b === 'tags') { const body = await readBody(req); return send(res, 200, { updated: tagPeople(body.ids || [], { add: body.add || [], remove: body.remove || [] }) }); }
     if (m === 'POST' && b === 'do-not-contact') {
       const body = await readBody(req);
@@ -183,7 +195,9 @@ async function api(req, res, parts, url) {
     if (m === 'GET') return send(res, 200, loadContacts());
     if (m === 'POST' && b === 'import') {
       const body = await readBody(req);
-      return send(res, 200, importContactsCsv(typeof body === 'string' ? body : body.csv || ''));
+      const result = importContactsCsv(typeof body === 'string' ? body : body.csv || '');
+      if (process.env.RELAY_OFFLINE !== '1' && result.added + result.updated > 0) startArticleBackfill(allPeople).catch(() => null); // fill "Latest piece" in the background
+      return send(res, 200, result);
     }
   }
   if (a === 'suppression') {
@@ -288,6 +302,8 @@ export function start({ port = PORT, host = HOST } = {}) {
     console.log(`Data: ${dataDir()}`);
   });
   startScheduler();
+  // Shortly after start, look up recent articles for anyone who has none yet.
+  if (process.env.RELAY_OFFLINE !== '1') setTimeout(() => startArticleBackfill(allPeople).catch(() => null), 5000).unref();
   return server;
 }
 

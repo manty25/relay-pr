@@ -77,47 +77,111 @@ export async function ensureOutletProfile(domain, name = '', { fetchImpl, delayM
 
 // ---------------------------------------------------------------- journalists' recent work
 
-const AUTHOR_PATHS = ['author', 'authors', 'by', 'people', 'staff', 'profile', 'contributors', 'reporters', 'journalists'];
+const AUTHOR_PATHS = ['author', 'authors', 'people', 'staff', 'by', 'profile', 'journalists', 'contributors', 'reporters'];
+const fold = (x) => String(x || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, ' ').trim();
+
+// Local-language Google News edition for non-US outlets (by country-code domain).
+const NEWS_EDITION = { fi: ['FI', 'fi'], se: ['SE', 'sv'], no: ['NO', 'no'], dk: ['DK', 'da'], de: ['DE', 'de'], at: ['AT', 'de'], ch: ['CH', 'de'], fr: ['FR', 'fr'], be: ['BE', 'fr'], es: ['ES', 'es'], it: ['IT', 'it'], nl: ['NL', 'nl'], pt: ['PT', 'pt-150'], pl: ['PL', 'pl'], uk: ['GB', 'en'], ie: ['IE', 'en'], au: ['AU', 'en'], nz: ['NZ', 'en'], ca: ['CA', 'en'], in: ['IN', 'en'], sg: ['SG', 'en'], jp: ['JP', 'ja'] };
+const editionFor = (...hosts) => { for (const h of hosts) { const t = String(h || '').split('.').pop(); if (NEWS_EDITION[t]) return NEWS_EDITION[t]; } return ['US', 'en']; };
+
+// The publication's own website — not necessarily the email domain (aaron@informatechtarget.com writes for computerweekly.com).
+export function siteFor(person) {
+  const raw = person.raw || {};
+  if (raw.siteDomain) return raw.siteDomain;
+  const name = fold(person.outlet);
+  if (name) {
+    const seed = OUTLETS.find((o) => fold(o.name) === name && !o.domain.includes('/') && !/\.example$/.test(o.domain));
+    if (seed) return seed.domain;
+    const known = loadOutlets().find((o) => fold(o.siteName) === name || fold(o.name) === name);
+    if (known) return known.domain;
+  }
+  return person.domain;
+}
 
 async function findAuthorPage(name, domain, fetcher) {
+  const rec = loadOutlets().find((o) => registrable(o.domain) === registrable(domain)) || {};
+  if (rec.authorPath === 'none' && fresh(rec.authorPathAt, 30 * 86400000)) return null;
   const s = slug(name);
-  for (const dir of AUTHOR_PATHS) {
+  const order = rec.authorPath && rec.authorPath !== 'none' ? [rec.authorPath] : AUTHOR_PATHS;
+  for (const dir of order) {
     const url = `https://${domain}/${dir}/${s}`;
     const html = await fetcher.get(url);
-    if (!html) continue;
-    if (!stripTags(html).toLowerCase().includes(name.toLowerCase())) continue;
+    if (!html || !fold(stripTags(html)).includes(fold(name))) continue;
     const arts = articleLinks(html, url, domain, 10);
-    if (arts.length >= 2) return { url, articles: arts };
+    if (arts.length >= 2) { if (rec.authorPath !== dir) saveOutletFields(domain, rec.name || domain, { authorPath: dir, authorPathAt: new Date().toISOString(), authorMisses: 0 }); return { url, articles: arts }; }
   }
+  // Remember sites without a guessable author-page pattern so we don't keep probing them.
+  const misses = (rec.authorMisses || 0) + 1;
+  saveOutletFields(domain, rec.name || domain, misses >= 2 ? { authorPath: 'none', authorPathAt: new Date().toISOString(), authorMisses: misses } : { authorMisses: misses });
   return null;
 }
 
-async function articlesByNameSearch(name, domain, fetchImpl) {
-  const items = await googleNewsSearch(`"${name}"`, { fetchImpl }).catch(() => []);
-  return items.filter((a) => registrable(a.domain || domainOf(a.url)) === registrable(domain)).slice(0, 8).map((a) => ({ title: a.title, url: a.url, date: a.date }));
+// News search by name, kept only when the result is from their own publication (by site or outlet name).
+async function articlesByNameSearch(person, site, fetchImpl) {
+  const [region, lang] = editionFor(site, person.domain, person.email);
+  const items = await googleNewsSearch(`"${person.name}"`, { region, lang, fetchImpl }).catch(() => []);
+  const outlet = fold(person.outlet);
+  const mine = items.filter((a) => registrable(a.domain || domainOf(a.url)) === registrable(site) || (outlet && fold(a.outlet) === outlet));
+  // News search ranks by relevance; we want their newest work first.
+  const newest = [...mine].sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+  return { list: newest.slice(0, 8).map((a) => ({ title: a.title, url: a.url, date: a.date })), site: mine[0]?.domain || '' };
 }
 
-// Refreshes a person's recent articles (cached for a week). `person` is a row from people.js.
+// Refreshes a person's recent articles (cached for a week). `person` is a row from people.js (with raw).
 export async function ensureRecentArticles(person, { fetchImpl, delayMs, force = false, fetcher } = {}) {
   if (!person?.domain || process.env.RELAY_OFFLINE === '1' || /\.(example|test)$/.test(person.domain)) return null;
   const raw = person.raw;
   if (!force && fresh(raw.recentAt, ARTICLES_TTL)) return raw.recent || raw.recentArticles || [];
   const f = fetcher || new PoliteFetcher({ fetchImpl, delayMs, budget: 12 });
+  let site = siteFor(person);
   let list = [], via = '', page = raw.profileUrl || '';
-  if (page) { const html = await f.get(page); if (html) { list = articleLinks(html, page, person.domain, 10); via = 'author-page'; } }
-  if (!list.length) { const found = await findAuthorPage(person.name, person.domain, f); if (found) { list = found.articles; via = 'author-page'; page = found.url; } }
-  if (!list.length) { list = await articlesByNameSearch(person.name, person.domain, fetchImpl); via = list.length ? 'name-search' : ''; }
+  if (page) { const html = await f.get(page); if (html) { list = articleLinks(html, page, site, 10); via = list.length ? 'author-page' : ''; } }
+  if (!list.length) { const found = await findAuthorPage(person.name, site, f); if (found) { list = found.articles; via = 'author-page'; page = found.url; } }
+  if (!list.length) {
+    const r = await articlesByNameSearch(person, site, fetchImpl);
+    list = r.list; via = list.length ? 'name-search' : '';
+    if (r.site && registrable(r.site) !== registrable(site)) site = r.site; // learned the publication's real site
+  }
   const now = new Date().toISOString();
   if (person.kind === 'contact') {
     const all = loadContacts();
     const c = all.find((x) => `c:${x.id}` === person.id);
-    if (c) { c.recentArticles = list; c.recentAt = now; c.recentVia = via; if (page) c.profileUrl = page; saveContacts(all); }
+    if (c) { c.recentArticles = list; c.recentAt = now; c.recentVia = via; if (page) c.profileUrl = page; if (site !== c.domain) c.siteDomain = site; saveContacts(all); }
   } else {
     const all = loadJournalists();
     const j = all.find((x) => `j:${x.id}` === person.id);
     if (j) { j.recent = list; j.recentAt = now; j.recentVia = via; if (page) j.profileUrl ||= page; saveJournalists(all); }
   }
   return list;
+}
+
+// ---------------------------------------------------------------- whole-database backfill (background)
+
+const backfill = { running: false, total: 0, checked: 0, found: 0, startedAt: '', finishedAt: '' };
+export const backfillStatus = () => ({ ...backfill });
+
+// Looks up recent articles for everyone missing them (or all, with force): a few sites in parallel,
+// each site fetched politely and sequentially.
+export async function startArticleBackfill(getPeople, { force = false, fetchImpl, delayMs, concurrency = 4 } = {}) {
+  if (backfill.running || process.env.RELAY_OFFLINE === '1') return backfillStatus();
+  const todo = getPeople().filter((p) => p.domain && !p.doNotContact && !/\.(example|test)$/.test(p.domain) && (force || !fresh(p.raw?.recentAt, ARTICLES_TTL)));
+  Object.assign(backfill, { running: true, total: todo.length, checked: 0, found: 0, startedAt: new Date().toISOString(), finishedAt: '' });
+  const bySite = new Map();
+  for (const p of todo) { const k = registrable(siteFor(p)); if (!bySite.has(k)) bySite.set(k, []); bySite.get(k).push(p); }
+  const queue = [...bySite.values()];
+  const worker = async () => {
+    while (queue.length) {
+      const group = queue.shift();
+      const f = new PoliteFetcher({ fetchImpl, delayMs, budget: 10 * group.length });
+      for (const p of group) {
+        const list = await ensureRecentArticles(p, { fetchImpl, delayMs, force, fetcher: f }).catch(() => null);
+        backfill.checked++;
+        if (list?.length) backfill.found++;
+      }
+    }
+  };
+  const run = Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, worker)).finally(() => { backfill.running = false; backfill.finishedAt = new Date().toISOString(); });
+  return run.then(backfillStatus);
 }
 
 // Merged, de-duplicated article list for a card: recent work first, topical pieces marked.

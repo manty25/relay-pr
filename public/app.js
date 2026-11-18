@@ -613,12 +613,37 @@ async function viewJournalists() {
   const topicLabel = Object.fromEntries((knowledge.topics || []).map((t) => [t.id, t.label]));
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const show = params.get('show') || 'active';
-  const [data, plan, campaigns] = await Promise.all([api(`people?${params}`), api('plan'), loadList()]);
+  const [data, plan, campaigns, arts] = await Promise.all([api(`people?${params}`), api('plan'), loadList(), api('people/articles').catch(() => null)]);
   const pro = plan.current === 'pro';
   const sel = new Set();
   const setParam = (k, v) => { const p = new URLSearchParams(params); if (v) p.set(k, v); else p.delete(k); location.hash = `#/journalists?${p}`; };
 
-  const q = h('input', { type: 'search', value: params.get('q') || '', placeholder: 'Search name, outlet, email, beat, tag…', 'aria-label': 'Search journalists', onkeydown: (e) => { if (e.key === 'Enter') setParam('q', e.target.value); } });
+  const q = h('input', { type: 'search', value: params.get('q') || '', placeholder: 'Search by name, outlet, country, beat or tag — e.g. “French tech”', 'aria-label': 'Search journalists', title: 'Searches by meaning: France = French = .fr addresses; AI = artificial intelligence; plurals and accents ignored', onkeydown: (e) => { if (e.key === 'Enter') setParam('q', e.target.value); } });
+
+  // Latest articles: progress while the background job runs, or a button to start it.
+  const artBanner = h('div', {});
+  const drawArts = (st) => {
+    if (!st?.enabled) { artBanner.replaceChildren(); return; }
+    if (st.running) {
+      artBanner.replaceChildren(h('div', { class: 'research', style: 'margin:18px 0 0' },
+        h('div', {}, h('div', { class: 't', style: 'font-size:19px' }, 'Finding everyone’s latest articles…'),
+          h('div', { class: 'small muted', style: 'margin-top:4px' }, `${st.checked} of ${st.total} checked · ${st.found} with recent articles so far. You can keep working; the list updates when it’s done.`),
+          h('div', { class: 'meter' }, h('span', { style: `width:${st.total ? Math.round((st.checked / st.total) * 100) : 3}%` }))), null));
+    } else if (st.missing > 0) {
+      artBanner.replaceChildren(h('div', { class: 'research', style: 'margin:18px 0 0' },
+        h('div', {}, h('div', { class: 't', style: 'font-size:19px' }, `${st.missing} journalists have no recent articles yet`),
+          h('div', { class: 'small muted', style: 'margin-top:4px' }, 'Relay reads their author pages on the publication’s site, or searches the news for their name at that outlet.')),
+        h('button', { class: 'btn pri sm', type: 'button', onclick: (e) => busy(e.currentTarget, 'Starting…', () => api('people/articles', { method: 'POST', body: {} })).then((r) => { drawArts({ ...r, enabled: true }); pollArts(); }) }, 'Find latest articles')));
+    } else artBanner.replaceChildren();
+  };
+  let artTimer = null;
+  const pollArts = () => { clearTimeout(artTimer); artTimer = setTimeout(async () => {
+    if (state.view !== 'journalists') return;
+    const st = await api('people/articles').catch(() => null);
+    if (st?.running) { drawArts(st); pollArts(); } else viewJournalists();
+  }, 3000); };
+  drawArts(arts);
+  if (arts?.running) pollArts();
   const srcChips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Source' }, ...[['', `All ${data.stats.total}`], ['list', `Your list ${data.stats.list}`], ['research', `Researched ${data.stats.research}`], ['apollo', `Apollo.io ${data.stats.apollo}`]]
     .map(([v, l]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String((params.get('source') || '') === v && show !== 'dnc'), onclick: () => { const p = new URLSearchParams(params); p.delete('show'); if (v) p.set('source', v); else p.delete('source'); location.hash = `#/journalists?${p}`; } }, l)),
     h('button', { type: 'button', class: 'chip', 'aria-pressed': String(show === 'dnc'), onclick: () => setParam('show', show === 'dnc' ? '' : 'dnc') }, `Do not contact ${data.stats.doNotContact}`));
@@ -656,6 +681,7 @@ async function viewJournalists() {
         pro ? h('a', { class: 'btn ghost sm', href: '/api/people/export.csv', download: 'all-journalists.csv' }, 'Export everyone') : h('a', { class: 'lock', href: '#/plans' }, '🔒 Export researched: Pro'))),
     h('div', { class: 'statrow' }, fig('Journalists', data.stats.total, 'you can pitch'), fig('From your list', data.stats.list, 'uploaded by you'), fig('Researched', data.stats.research + data.stats.apollo, `incl. ${data.stats.apollo} via Apollo.io`), fig('Need re-checking', data.stats.stale, 'verified over 12 months ago')),
     importPanel,
+    artBanner,
     h('div', { class: 'row', style: 'margin:22px 0 10px;gap:12px' }, h('div', { style: 'flex:1;min-width:220px' }, q), h('div', { style: 'width:180px' }, tagSel), topics.length ? h('div', { style: 'width:200px' }, topicSel) : null),
     srcChips,
     h('datalist', { id: 'tag-list' }, ...data.tags.map((t) => h('option', { value: t.tag }))),
@@ -672,7 +698,7 @@ async function viewJournalists() {
               p.emailSource && p.provider !== 'apollo' ? h('a', { href: p.emailSource, target: '_blank', rel: 'noopener' }, 'source ↗') : null)),
           h('td', { class: 'small muted' }, [...p.topics.map((t) => topicLabel[t] || t), ...p.beats.slice(0, 3)].join(', ') || '—'),
           h('td', {}, h('div', { class: 'tags' }, ...p.tags.map((t) => h('button', { class: 'badge tagchip', type: 'button', title: `Show everyone tagged ${t}`, onclick: () => setParam('tag', t) }, t)))),
-          h('td', { class: 'small' }, p.latestArticle ? [p.latestArticle.url ? h('a', { href: p.latestArticle.url, target: '_blank', rel: 'noopener' }, p.latestArticle.title.slice(0, 64)) : p.latestArticle.title.slice(0, 64), p.latestArticle.date ? h('div', { class: 'muted' }, fmt.rel(p.latestArticle.date)) : null] : '—'),
+          h('td', { class: 'small' }, p.latestArticle ? [p.latestArticle.url ? h('a', { href: p.latestArticle.url, target: '_blank', rel: 'noopener' }, p.latestArticle.title.slice(0, 64)) : p.latestArticle.title.slice(0, 64), p.latestArticle.date ? h('div', { class: 'muted' }, fmt.rel(p.latestArticle.date)) : null] : arts?.running && !p.checkedAt ? h('span', { class: 'muted' }, 'Looking…') : p.checkedAt ? h('span', { class: 'muted' }, 'None found') : '—'),
           h('td', {}, h('button', { class: 'link', type: 'button', onclick: () => removeOne(p) }, p.kind === 'contact' ? 'Remove' : 'Forget')));
       }))))
       : h('div', { class: 'empty' }, h('h2', {}, data.stats.total || show === 'dnc' ? 'Nobody matches' : 'No journalists yet'), h('p', {}, data.stats.total || show === 'dnc' ? 'Try another search or filter.' : 'Import your contact list above, or build a campaign — Relay researches the reporters who cover your topic and adds them here.')),

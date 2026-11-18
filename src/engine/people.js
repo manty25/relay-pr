@@ -7,12 +7,13 @@ import { loadContacts, saveContacts, loadSuppression, isSuppressed } from './con
 import { loadJournalists, saveJournalists, usableEmail, isStale, forgetJournalist } from './directory.js';
 import { findOutlet } from './targeting.js';
 import { outletFacts } from './profiles.js';
+import { parseQuery, matchesQuery } from '../knowledge/search-terms.js';
 
 const cleanTags = (tags) => [...new Set((tags || []).map((t) => String(t).trim()).filter(Boolean).map((t) => t.slice(0, 40)))].slice(0, 20);
 
 function fromContact(c, supp) {
   return {
-    id: `c:${c.id}`, kind: 'contact', name: c.name, outlet: c.outlet || findOutlet(c.domain)?.name || c.domain, domain: c.domain,
+    id: `c:${c.id}`, kind: 'contact', siteDomain: c.siteDomain || '', checkedAt: c.recentAt || '', name: c.name, outlet: c.outlet || findOutlet(c.domain)?.name || c.domain, domain: c.domain,
     email: c.email, emailSource: '', provider: 'list', verifiedAt: '', stale: false,
     sources: ['list'], beats: c.beats || [], topics: [], tags: c.tags || [],
     latestArticle: c.recentArticles?.[0] || c.recentArticle || null, outletLine: outletFacts(c.domain), doNotContact: isSuppressed(c.email, supp), raw: c,
@@ -23,7 +24,7 @@ function fromJournalist(j, supp) {
   const e = usableEmail(j, supp);
   const anyEmail = j.emails[0];
   return {
-    id: `j:${j.id}`, kind: 'journalist', name: j.name, outlet: j.outlet, domain: j.domain,
+    id: `j:${j.id}`, kind: 'journalist', siteDomain: '', checkedAt: j.recentAt || '', name: j.name, outlet: j.outlet, domain: j.domain,
     email: e?.address || '', emailSource: e?.source || '', provider: e?.provider || (e ? 'published' : ''), verifiedAt: e?.verifiedAt || '', stale: e ? isStale(e) : false,
     sources: [e?.provider === 'apollo' ? 'apollo' : 'research'], beats: Object.keys(j.beats || {}), topics: Object.keys(j.topics || {}), tags: j.tags || [],
     latestArticle: j.recent?.[0] || j.articles?.[0] || null, outletLine: outletFacts(j.domain), doNotContact: Boolean(anyEmail && !e) || j.optedOut, raw: j,
@@ -76,7 +77,11 @@ export function listPeople({ q = '', source = '', tag = '', topic = '', show = '
   if (source) rows = rows.filter((p) => p.sources.includes(source));
   if (tag) rows = rows.filter((p) => p.tags.includes(tag));
   if (topic) rows = rows.filter((p) => p.topics.includes(topic));
-  if (s) rows = rows.filter((p) => `${p.name} ${p.outlet} ${p.email} ${p.domain} ${p.tags.join(' ')} ${p.beats.join(' ')} ${p.latestArticle?.title || ''}`.toLowerCase().includes(s));
+  if (s) {
+    // Meaning-based: "France" = "French" = .fr domains; "AI" = "artificial intelligence"; plurals and accents ignored.
+    const needs = parseQuery(s);
+    rows = rows.filter((p) => matchesQuery(needs, [p.name, p.outlet, p.email, p.domain, p.siteDomain, p.tags.join(' '), p.beats.join(' '), p.topics.join(' '), p.outletLine, p.latestArticle?.title, ...(p.raw?.recent || p.raw?.recentArticles || []).map((a) => a.title)].join(' '), [p.email, p.domain, p.siteDomain]));
+  }
   if (campaign) rows = rows.map((p) => ({ ...p, fit: fitFor(p, campaign) })).sort((a, b) => b.fit - a.fit || a.name.localeCompare(b.name));
   else rows.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'contact' ? -1 : 1));
   // Plan gating applies to researched people only; your own list is always fully visible.

@@ -50,7 +50,8 @@ export function parseRss(xml) {
     const title = tag('title');
     const source = tag('source');
     items.push({
-      title: source && title.endsWith(` - ${source}`) ? title.slice(0, -(source.length + 3)) : title,
+      // Google appends " - Source" (also with – or —); strip it and any dangling separator.
+      title: (source ? title.replace(new RegExp(`\\s*[-–—|]\\s*${source.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`), '') : title).replace(/\s*[-–—|]\s*$/, ''),
       url: tag('link'), date: tag('pubDate') ? new Date(tag('pubDate')).toISOString().slice(0, 10) : '',
       outlet: source, domain: domainOf(srcUrl) || domainOf(tag('link')), source: 'googlenews',
     });

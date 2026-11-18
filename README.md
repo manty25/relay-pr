@@ -114,7 +114,26 @@ The **Journalists** page (top navigation, `J`) lists everyone you can pitch in o
 - reporters Relay researched, including any found via Apollo.io ("Researched")
 
 Use the source chips, search, topic and **tags** (your own categories such as "Tier 1 tech", "Friendly",
-"Texas") to slice it. Tick several rows to tag them, add them to a campaign, or mark them do-not-contact. Import a
+"Texas") to slice it.
+
+Search works by meaning, not exact text:
+
+- "France", "French" and "Paris" find the same people, including anyone with a .fr address or outlet. The same
+  goes for about 30 countries.
+- Regions expand to their countries: "Nordic", "Europe", "APAC".
+- Common themes are understood: "AI" = artificial intelligence, "EV" = electric vehicles, "tech" = technology.
+- Plurals and accents are ignored.
+- Several words narrow the list, e.g. "French tech".
+
+Each journalist's **latest piece** is filled in automatically after you import a list and shortly after the
+server starts. A banner shows progress, or press **Find latest articles**.
+
+- Relay works out the publication's own site from the outlet name, since email domains often differ (e.g.
+  informatechtarget.com → Computer Weekly).
+- It reads the reporter's author page there and remembers each site's author-page pattern.
+- If there's no author page, it uses a news search for their name at that outlet, in the outlet's own language
+  edition (Finnish for .fi, French for .fr…), newest first.
+- Results are cached for a week. Tick several rows to tag them, add them to a campaign, or mark them do-not-contact. Import a
 CSV from the same page (a `tags` column is supported). "Remove" deletes someone from your list; "Forget" deletes
 a researched person and blocks their address from being collected again. Over time this becomes your own
 media database organised by topic, and new campaigns on familiar topics start with a ready list.
@@ -223,7 +242,7 @@ service choice and a checklist; you submit it to the wire service you choose.
 ## Tests
 
 ```bash
-npm test             # 76 tests, named after the standards they enforce
+npm test             # 85 tests, named after the standards they enforce
 ```
 
 The tests run offline and include a mock Messages API that checks the Claude writing path end to end.

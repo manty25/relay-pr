@@ -133,3 +133,74 @@ test('card API: person, outlet, articles (topical marked) and campaign context',
   const t = c.targets.find((x) => x.email === 'alex@citycycle.news');
   assert.ok(t.outletLine !== undefined, 'targets carry the outlet one-liner');
 });
+
+// ---- publication site, local news edition, learned author paths, whole-list backfill ----------
+test('publication site comes from the outlet name, not the email domain', () => {
+  importContactsCsv(`name,email,outlet,domain
+Jo Tech,jo@yahooinc.com,TechCrunch,yahooinc.com`);
+  const jo = people.personById(people.listPeople({ q: 'Jo Tech' }).rows[0].id);
+  assert.equal(profiles.siteFor(jo), 'techcrunch.com');
+});
+
+test('name search uses the local edition and matches the outlet by name; learns its site', async () => {
+  const seen = [];
+  const fi = `<?xml version="1.0"?><rss><channel>
+<item><title>Aleksi Kolehmainen: Pörssi nousi - Talouselämä</title><link>https://news.google.com/f1</link><pubDate>${today.toUTCString()}</pubDate><source url="https://www.talouselama.fi">Talouselämä</source></item>
+<item><title>Muu juttu - Iltalehti</title><link>https://news.google.com/f2</link><pubDate>${today.toUTCString()}</pubDate><source url="https://www.iltalehti.fi">Iltalehti</source></item>
+</channel></rss>`;
+  const fetchImpl = async (url) => { seen.push(String(url)); return String(url).includes('news.google.com') ? new Response(fi) : new Response('nf', { status: 404 }); };
+  importContactsCsv(`name,email,outlet
+Aleksi Kolehmainen,aleksi.kolehmainen@almamedia.fi,Talouselämä`);
+  const p = people.personById(people.listPeople({ q: 'Kolehmainen' }).rows[0].id);
+  const list = await profiles.ensureRecentArticles(p, { fetchImpl, delayMs: 0 });
+  assert.deepEqual(list.map((a) => a.title), ['Aleksi Kolehmainen: Pörssi nousi']);
+  assert.ok(seen.some((u) => u.includes('news.google.com') && u.includes('hl=fi-FI')), 'Finnish edition for a .fi outlet');
+  assert.equal(people.personById(p.id).raw.siteDomain, 'talouselama.fi', 'learned the publication’s own site');
+});
+
+test('a site’s author-page pattern is learned and reused', async () => {
+  const pages = {
+    'https://pattern.news/robots.txt': '',
+    'https://pattern.news/staff/ann-one': '<h1>Ann One</h1><a href="/2026/11/01/first-story-about-bikes-here">First story about bikes here today</a><a href="/2026/10/01/second-story-about-cities-here">Second story about cities here now</a>',
+    'https://pattern.news/staff/bo-two': '<h1>Bo Two</h1><a href="/2026/11/03/bo-writes-about-electric-scooters">Bo writes about electric scooters again</a><a href="/2026/10/03/bo-writes-about-city-parking">Bo writes about city parking rules</a>',
+  };
+  const seen = [];
+  const fetchImpl = async (url) => { seen.push(String(url)); const b = pages[String(url)]; return b !== undefined ? new Response(b, { headers: { 'content-type': 'text/html' } }) : new Response('nf', { status: 404 }); };
+  importContactsCsv(`name,email,outlet,domain
+Ann One,ann@pattern.news,Pattern,pattern.news
+Bo Two,bo@pattern.news,Pattern,pattern.news`);
+  const ann = people.personById(people.listPeople({ q: 'Ann One' }).rows[0].id);
+  assert.equal((await profiles.ensureRecentArticles(ann, { fetchImpl, delayMs: 0 })).length, 2);
+  seen.length = 0;
+  const bo = people.personById(people.listPeople({ q: 'Bo Two' }).rows[0].id);
+  assert.equal((await profiles.ensureRecentArticles(bo, { fetchImpl, delayMs: 0 })).length, 2);
+  const probes = seen.filter((u) => u.startsWith('https://pattern.news/') && !u.endsWith('robots.txt'));
+  assert.deepEqual(probes, ['https://pattern.news/staff/bo-two'], 'went straight to /staff/');
+});
+
+test('backfill: everyone missing articles is looked up once; fresh people are skipped', async () => {
+  const gnEmpty = '<?xml version="1.0"?><rss><channel></channel></rss>';
+  let lookups = 0;
+  const fetchImpl = async (url) => { if (String(url).includes('news.google.com')) { lookups++; return new Response(gnEmpty); } return new Response('nf', { status: 404 }); };
+  const status = await profiles.startArticleBackfill(people.allPeople, { fetchImpl, delayMs: 0 });
+  assert.equal(status.running, false);
+  assert.ok(status.total >= 1 && status.checked === status.total);
+  assert.ok(people.allPeople().filter((p) => !p.doNotContact).every((p) => p.checkedAt), 'everyone has been checked');
+  const before = lookups;
+  const again = await profiles.startArticleBackfill(people.allPeople, { fetchImpl, delayMs: 0 });
+  assert.equal(again.total, 0, 'nothing to do within a week');
+  assert.equal(lookups, before);
+});
+
+test('name search shows their newest piece first and cleans Google’s title suffix', async () => {
+  const rss = `<?xml version="1.0"?><rss><channel>
+<item><title>Old story from 2019 – Daily Wire</title><link>https://news.google.com/o</link><pubDate>Mon, 07 Jan 2019 10:00:00 GMT</pubDate><source url="https://dailywire.news">Daily Wire</source></item>
+<item><title>Fresh story this week – Daily Wire</title><link>https://news.google.com/n</link><pubDate>${today.toUTCString()}</pubDate><source url="https://dailywire.news">Daily Wire</source></item>
+</channel></rss>`;
+  const fetchImpl = async (url) => (String(url).includes('news.google.com') ? new Response(rss) : new Response('nf', { status: 404 }));
+  importContactsCsv(`name,email,outlet,domain
+Nina Order,nina@dailywire.news,Daily Wire,dailywire.news`);
+  const p = people.personById(people.listPeople({ q: 'Nina Order' }).rows[0].id);
+  const list = await profiles.ensureRecentArticles(p, { fetchImpl, delayMs: 0 });
+  assert.deepEqual(list.map((a) => a.title), ['Fresh story this week', 'Old story from 2019']);
+});
