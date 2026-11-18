@@ -114,3 +114,37 @@ export async function sendTestEmail(campaign, to) {
   audit({ campaignId: campaign.id, channel: 'email', mode: 'test-email', to, provider });
   return { ok: true, provider, from, to, at };
 }
+
+// Connection check without sending anything: is the key accepted, and which sending domains are verified?
+export async function checkEmailConnection({ fetchImpl = globalThis.fetch } = {}) {
+  const provider = emailProvider();
+  const at = new Date().toISOString();
+  if (provider === 'outbox') {
+    const named = (process.env.RELAY_EMAIL_PROVIDER || '').toLowerCase();
+    return { provider, ok: false, at, error: named ? `RELAY_EMAIL_PROVIDER is "${named}" but its API key is not set.` : 'No email service is connected (RELAY_EMAIL_PROVIDER is not set).' };
+  }
+  const get = async (url, headers) => {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 10000);
+    try { const res = await fetchImpl(url, { headers: { accept: 'application/json', ...headers }, signal: ctl.signal }); return { status: res.status, body: await res.json().catch(() => ({})) }; }
+    catch (e) { return { status: 0, body: { message: e.name === 'AbortError' ? 'timed out' : e.message } }; } finally { clearTimeout(t); }
+  };
+  if (provider === 'resend') {
+    const r = await get('https://api.resend.com/domains', { authorization: `Bearer ${process.env.RESEND_API_KEY}` });
+    if (r.status === 200) {
+      const domains = (r.body.data || []).map((d) => ({ name: d.name, status: d.status, region: d.region }));
+      const verified = domains.filter((d) => d.status === 'verified');
+      return { provider, ok: true, at, keyOk: true, domains,
+        note: verified.length ? `Can send from ${verified.map((d) => `@${d.name}`).join(', ')}.` : domains.length ? 'No domain is verified yet — finish DNS setup in Resend → Domains.' : 'No sending domain added yet — add your work domain in Resend → Domains.' };
+    }
+    // A "sending access" key can send but not list domains: the key works; the domain is proven by a test email.
+    if (r.status === 401 && /restricted/i.test(`${r.body.name || ''} ${r.body.message || ''}`)) return { provider, ok: true, at, keyOk: true, restricted: true, domains: null, note: 'The key works (sending-only key, so domains can’t be listed). Send a test email to confirm your domain.' };
+    return { provider, ok: false, at, keyOk: r.status !== 401 && r.status !== 403 ? null : false, error: r.status ? `Resend responded ${r.status}: ${r.body.message || r.body.name || ''}`.trim() : `Couldn’t reach Resend (${r.body.message}).` };
+  }
+  if (provider === 'postmark') {
+    const r = await get('https://api.postmarkapp.com/server', { 'X-Postmark-Server-Token': process.env.POSTMARK_TOKEN });
+    return r.status === 200 ? { provider, ok: true, at, keyOk: true, note: `Server “${r.body.Name}”. Sender signatures are checked by a test email.` } : { provider, ok: false, at, keyOk: false, error: `Postmark responded ${r.status}: ${r.body.Message || ''}` };
+  }
+  const r = await get('https://api.sendgrid.com/v3/scopes', { authorization: `Bearer ${process.env.SENDGRID_API_KEY}` });
+  const canSend = (r.body.scopes || []).includes('mail.send');
+  return r.status === 200 ? { provider, ok: canSend, at, keyOk: true, note: canSend ? 'The key can send mail.' : '', error: canSend ? undefined : 'The SendGrid key lacks the mail.send permission.' } : { provider, ok: false, at, keyOk: false, error: `SendGrid responded ${r.status}` };
+}

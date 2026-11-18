@@ -10,7 +10,7 @@ import {
 } from './src/index.js';
 import { listCampaigns, deleteCampaign, saveCampaign, APP_ROOT, campaignDir, readAudit, dataDir } from './src/store.js';
 import { loadContacts, importContactsCsv, contactsCsv, loadSuppression, suppress } from './src/engine/contacts.js';
-import { outboxFiles, emailProvider, sendTestEmail } from './src/distribute/email.js';
+import { outboxFiles, emailProvider, sendTestEmail, checkEmailConnection } from './src/distribute/email.js';
 import { socialAdapters } from './src/distribute/social.js';
 import { newsroomRoot } from './src/distribute/newsroom.js';
 import { resolveLink, recordClick } from './src/distribute/tracking.js';
@@ -121,6 +121,7 @@ async function api(req, res, parts, url) {
   const [, , a, b, c2, ...rest] = parts; // '', 'api', a, b, c2
   if (a === 'status' && m === 'GET') return send(res, 200, status());
   if (a === 'knowledge' && m === 'GET') return send(res, 200, { topics: TOPICS.map((t) => ({ id: t.id, label: t.label, wire: t.wire })), channels: CHANNELS, sample: SAMPLE_BRIEF });
+  if (a === 'email' && b === 'check' && m === 'GET') return send(res, 200, await checkEmailConnection());
   if (a === 'website' && m === 'POST') { const body = await readBody(req); return send(res, 200, await websiteSuggestions(body.brief || body, { force: Boolean(body.force) })); }
   if (a === 'preview' && m === 'POST') { const body = await readBody(req); return send(res, 200, previewBrief(body.brief || body)); }
   if (a === 'audit' && m === 'GET') return send(res, 200, readAudit(b ? (e) => e.campaignId === b : undefined, 300));

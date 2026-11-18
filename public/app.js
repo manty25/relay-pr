@@ -839,10 +839,16 @@ async function launch(c) {
   const te = c.compliance?.testEmail;
   const testTo = h('input', { type: 'email', value: te?.to || (/^[^\s@\[]+@/.test(c.brief.contact.email || '') ? c.brief.contact.email : ''), placeholder: 'you@yourcompany.com', 'aria-label': 'Send the test email to' });
   const testNote = h('div', { class: 'small', 'aria-live': 'polite' }, te ? (te.ok ? h('span', { class: 'i-ok' }, `✓ Sent ${fmt.rel(te.at)} from ${te.from} to ${te.to}. Check it arrived (not in spam).`) : [h('span', { class: 'i-err' }, `Last test failed: ${te.error}`), te.hint ? h('div', { class: 'muted' }, te.hint) : null]) : null);
+  const conn = h('div', { class: 'small', style: 'margin-top:8px' }, h('span', { class: 'muted' }, 'Checking the connection…'));
+  if (st.email && st.email !== 'outbox') api('email/check').then((r) => conn.replaceChildren(
+    r.ok ? h('span', { class: 'i-ok' }, `✓ Connected. ${r.note || ''}`) : h('span', { class: 'i-err' }, `Not working: ${r.error}`),
+    r.domains?.length ? h('div', { class: 'muted' }, `Domains: ${r.domains.map((d) => `${d.name} (${d.status.replace(/_/g, ' ')})`).join(', ')}`) : '')).catch((e) => conn.replaceChildren(h('span', { class: 'i-err' }, e.message)));
+  else conn.replaceChildren();
   const delivery = h('section', { class: 'sec' }, h('h4', {}, '3 · Email delivery'),
     st.email && st.email !== 'outbox'
       ? h('p', { style: 'margin-top:12px' }, `Pitches go out through ${PROVIDER[st.email] || st.email}, from your sender address above. Replies come to ${/^[^\s@\[]+@[^\s@]+\.[^\s@]+$/.test(c.brief.contact.email || '') ? c.brief.contact.email : 'your sender address (add a media contact email to change that)'}.${st.testInbox ? ' In test mode, a copy of every pitch also goes to your test inbox.' : ''}`)
       : h('p', { style: 'margin-top:12px' }, 'No email service is connected yet, so everything goes to the outbox. Add RELAY_EMAIL_PROVIDER and its key in your Render Environment tab.'),
+    conn,
     st.email && st.email !== 'outbox' ? h('div', { class: 'row', style: 'margin-top:12px;gap:8px;flex-wrap:wrap' }, testTo,
       h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => busy(e.currentTarget, 'Sending…', () => api(`campaigns/${c.id}/test-email`, { method: 'POST', body: { to: testTo.value } })).then((r) => { toast(r.ok ? `Test email sent to ${r.to}` : 'Test email failed'); route(); }) }, 'Send me a test email')) : null,
     testNote);

@@ -59,3 +59,20 @@ test('the test result cannot be set through a campaign patch', async () => {
   assert.equal(c.compliance.legalBasis, 'legitimate_interest');
   assert.equal(c.compliance.testEmail, undefined);
 });
+
+test('connection check: key accepted and verified domains listed, nothing sent', async () => {
+  const { checkEmailConnection } = await import('../src/distribute/email.js');
+  assert.match((await checkEmailConnection()).error, /not set/);
+  process.env.RELAY_EMAIL_PROVIDER = 'resend'; process.env.RESEND_API_KEY = 're_test';
+  try {
+    const ok = await checkEmailConnection({ fetchImpl: async (url, init) => { assert.equal(String(url), 'https://api.resend.com/domains'); assert.equal(init.method, undefined); return new Response(JSON.stringify({ data: [{ name: 'lumora.com', status: 'verified' }, { name: 'news.lumora.com', status: 'pending' }] })); } });
+    assert.equal(ok.ok, true);
+    assert.match(ok.note, /@lumora\.com/);
+    const restricted = await checkEmailConnection({ fetchImpl: async () => new Response(JSON.stringify({ name: 'restricted_api_key', message: 'This API key is restricted to only send emails' }), { status: 401 }) });
+    assert.equal(restricted.ok, true);
+    assert.equal(restricted.restricted, true);
+    const bad = await checkEmailConnection({ fetchImpl: async () => new Response(JSON.stringify({ name: 'validation_error', message: 'API key is invalid' }), { status: 400 }) });
+    assert.equal(bad.ok, false);
+    assert.match(bad.error, /invalid/);
+  } finally { delete process.env.RELAY_EMAIL_PROVIDER; delete process.env.RESEND_API_KEY; }
+});
