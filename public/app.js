@@ -566,10 +566,12 @@ async function media(c) {
 
 // Sheet: pick people from the whole database (your list + researched), ranked by fit for this campaign.
 async function openAddJournalists(c) {
-  const st = { q: '', source: '', tag: '', picked: new Set() };
+  knowledge ||= await api('knowledge').catch(() => ({ topics: [] }));
+  const st = { q: '', source: '', tag: '', cover: '', picked: new Set() };
   const list = h('ul', { class: 'picklist' });
   const addBtn = h('button', { class: 'btn acc', type: 'button', disabled: true, onclick: async (e) => { await busy(e.currentTarget, 'Adding…', () => api(`campaigns/${c.id}`, { method: 'PATCH', body: { selection: { add: [...st.picked] } } })); closeOverlay(); toast(`Added ${st.picked.size} journalist${st.picked.size === 1 ? '' : 's'}`); route(); } }, 'Add selected');
   const tagSel = h('select', { 'aria-label': 'Tag' });
+  const coverSel = h('select', { 'aria-label': 'Topic' });
   const srcSel = h('select', { 'aria-label': 'Source' }, ...[['', 'Everyone'], ['list', 'Your list'], ['research', 'Researched'], ['apollo', 'Apollo.io']].map(([v, l]) => h('option', { value: v }, l)));
   const q = h('input', { type: 'search', placeholder: 'Search name, outlet, beat, tag…', 'aria-label': 'Search journalists' });
   const selectAll = h('button', { class: 'link', type: 'button' }, 'Select all shown');
@@ -577,9 +579,10 @@ async function openAddJournalists(c) {
   const upd = () => { addBtn.disabled = !st.picked.size; addBtn.replaceChildren(st.picked.size ? `Add ${st.picked.size} selected` : 'Add selected'); };
   async function load() {
     const p = new URLSearchParams({ campaign: c.id });
-    for (const k of ['q', 'source', 'tag']) if (st[k]) p.set(k, st[k]);
+    for (const k of ['q', 'source', 'tag', 'cover']) if (st[k]) p.set(k, st[k]);
     const r = await api(`people?${p}`);
-    if (tagSel.options.length <= 1) tagSel.replaceChildren(h('option', { value: '' }, 'Any tag'), ...r.tags.map((t) => h('option', { value: t.tag }, `${t.tag} (${t.count})`)));
+    tagOptions(tagSel, r.facets.tags, st.tag);
+    coverOptions(coverSel, r.facets.covers, st.cover);
     rows = r.rows.filter((x) => x.email);
     list.replaceChildren(...(rows.length ? rows.map((x) => {
       const box = h('input', { type: 'checkbox', checked: x.inCampaign || st.picked.has(x.id), disabled: x.inCampaign, onchange: (e) => { e.target.checked ? st.picked.add(x.id) : st.picked.delete(x.id); upd(); } });
@@ -597,20 +600,43 @@ async function openAddJournalists(c) {
   q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { st.q = q.value; load(); }, 200); });
   srcSel.addEventListener('change', () => { st.source = srcSel.value; load(); });
   tagSel.addEventListener('change', () => { st.tag = tagSel.value; load(); });
+  coverSel.addEventListener('change', () => { st.cover = coverSel.value; load(); });
   openOverlay(h('div', { class: 'sheet addsheet', role: 'dialog', 'aria-label': 'Add journalists' },
     h('div', { class: 'addhead' }, h('h2', {}, 'Add journalists'), h('p', { class: 'small muted' }, 'Everyone in your database — your own list and researched reporters — ranked by fit for this campaign.'),
-      h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:200px' }, q), h('div', { style: 'width:150px' }, srcSel), h('div', { style: 'width:170px' }, tagSel))),
+      h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:200px' }, q), h('div', { style: 'width:140px' }, srcSel), h('div', { style: 'width:150px' }, tagSel), h('div', { style: 'width:170px' }, coverSel))),
     list,
     h('div', { class: 'addfoot' }, selectAll, h('div', { class: 'row' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeOverlay }, 'Cancel'), addBtn))));
   q.focus();
   load();
 }
 
+// ---- filter dropdowns (tags and topics/covers) with live counts ----
+const ACRONYMS = new Set(['ai', 'apac', 'emea', 'eu', 'us', 'uk', 'ev', 'evs', 'hr', 'it', 'b2b', 'b2c', 'saas', 'vc', 'esg', 'pr', 'latam', 'mena', 'iot', 'ar', 'vr', 'ml', 'smb', 'nfl', 'nba']);
+function coverLabel(v) {
+  const known = Object.fromEntries((knowledge?.topics || []).map((t) => [t.id, t.label]));
+  if (known[v]) return known[v];
+  const t = String(v).replace(/[-_]+/g, ' ').trim().split(/\s+/).map((w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w)).join(' ');
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+function tagOptions(sel, facets, selected) {
+  sel.replaceChildren(h('option', { value: '' }, facets.length ? 'Any tag' : 'No tags yet'), ...facets.map((f) => h('option', { value: f.value, selected: f.value === selected }, `${f.value} (${f.count})`)));
+  sel.disabled = !facets.length && !selected;
+}
+function coverOptions(sel, facets, selected) {
+  const ids = new Set((knowledge?.topics || []).map((t) => t.id));
+  const topics = facets.filter((f) => ids.has(f.value));
+  const beats = facets.filter((f) => !ids.has(f.value));
+  const opt = (f) => h('option', { value: f.value, selected: f.value === selected }, `${coverLabel(f.value)} (${f.count})`);
+  sel.replaceChildren(h('option', { value: '' }, facets.length ? 'Any topic' : 'No topics yet'),
+    topics.length ? h('optgroup', { label: 'Campaign topics' }, ...topics.map(opt)) : null,
+    beats.length ? h('optgroup', { label: 'Covers' }, ...beats.map(opt)) : null);
+  sel.disabled = !facets.length && !selected;
+}
+
 // ---- Journalists: one database of your uploaded contacts + researched reporters ----
 async function viewJournalists() {
   state.view = 'journalists'; state.campaign = null; setNav('journalists'); renderMode(); state.save = null;
   knowledge ||= await api('knowledge').catch(() => ({ topics: [] }));
-  const topicLabel = Object.fromEntries((knowledge.topics || []).map((t) => [t.id, t.label]));
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const show = params.get('show') || 'active';
   const [data, plan, campaigns, arts] = await Promise.all([api(`people?${params}`), api('plan'), loadList(), api('people/articles').catch(() => null)]);
@@ -647,9 +673,12 @@ async function viewJournalists() {
   const srcChips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Source' }, ...[['', `All ${data.stats.total}`], ['list', `Your list ${data.stats.list}`], ['research', `Researched ${data.stats.research}`], ['apollo', `Apollo.io ${data.stats.apollo}`]]
     .map(([v, l]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String((params.get('source') || '') === v && show !== 'dnc'), onclick: () => { const p = new URLSearchParams(params); p.delete('show'); if (v) p.set('source', v); else p.delete('source'); location.hash = `#/journalists?${p}`; } }, l)),
     h('button', { type: 'button', class: 'chip', 'aria-pressed': String(show === 'dnc'), onclick: () => setParam('show', show === 'dnc' ? '' : 'dnc') }, `Do not contact ${data.stats.doNotContact}`));
-  const tagSel = h('select', { 'aria-label': 'Tag', onchange: (e) => setParam('tag', e.target.value) }, h('option', { value: '' }, 'Any tag'), ...data.tags.map((t) => h('option', { value: t.tag, selected: params.get('tag') === t.tag }, `${t.tag} (${t.count})`)));
-  const topics = [...new Set(data.rows.flatMap((p) => p.topics))];
-  const topicSel = h('select', { 'aria-label': 'Topic', onchange: (e) => setParam('topic', e.target.value) }, h('option', { value: '' }, 'Any topic'), ...topics.map((t) => h('option', { value: t, selected: params.get('topic') === t }, topicLabel[t] || t)));
+  const tagSel = h('select', { 'aria-label': 'Tag', onchange: (e) => setParam('tag', e.target.value) });
+  tagOptions(tagSel, data.facets.tags, params.get('tag') || '');
+  const coverParam = params.get('cover') || params.get('topic') || '';
+  const topicSel = h('select', { 'aria-label': 'Topic', onchange: (e) => { const p = new URLSearchParams(params); p.delete('topic'); if (e.target.value) p.set('cover', e.target.value); else p.delete('cover'); location.hash = `#/journalists?${p}`; } });
+  coverOptions(topicSel, data.facets.covers, coverParam);
+  const filtered = ['q', 'tag', 'cover', 'topic', 'source', 'show'].some((k) => params.get(k));
 
   // Bulk actions for checked rows
   const bulk = h('div', { class: 'bulk', hidden: true });
@@ -682,8 +711,9 @@ async function viewJournalists() {
     h('div', { class: 'statrow' }, fig('Journalists', data.stats.total, 'you can pitch'), fig('From your list', data.stats.list, 'uploaded by you'), fig('Researched', data.stats.research + data.stats.apollo, `incl. ${data.stats.apollo} via Apollo.io`), fig('Need re-checking', data.stats.stale, 'verified over 12 months ago')),
     importPanel,
     artBanner,
-    h('div', { class: 'row', style: 'margin:22px 0 10px;gap:12px' }, h('div', { style: 'flex:1;min-width:220px' }, q), h('div', { style: 'width:180px' }, tagSel), topics.length ? h('div', { style: 'width:200px' }, topicSel) : null),
-    srcChips,
+    h('div', { class: 'row', style: 'margin:22px 0 10px;gap:12px' }, h('div', { style: 'flex:1;min-width:220px' }, q), h('div', { style: 'width:190px' }, tagSel), h('div', { style: 'width:230px' }, topicSel)),
+    h('div', { class: 'spread', style: 'align-items:center' }, srcChips,
+      filtered ? h('span', { class: 'small' }, `${data.total} match${data.total === 1 ? '' : 'es'} · `, h('a', { href: '#/journalists' }, 'Clear filters')) : null),
     h('datalist', { id: 'tag-list' }, ...data.tags.map((t) => h('option', { value: t.tag }))),
     bulk,
     data.rows.length ? h('div', { class: 'tablewrap', style: 'margin-top:12px' }, h('table', {},
@@ -696,7 +726,7 @@ async function viewJournalists() {
           h('td', {}, p.email ? h('div', { class: 'small' }, p.email) : h('span', { class: 'small muted' }, 'No address yet'),
             h('div', { class: 'src' }, badge(s[0], s[1]), p.sources.length > 1 ? badge('+ researched', 'ok') : null, p.stale ? badge('re-check', 'warn') : null,
               p.emailSource && p.provider !== 'apollo' ? h('a', { href: p.emailSource, target: '_blank', rel: 'noopener' }, 'source ↗') : null)),
-          h('td', { class: 'small muted' }, [...p.topics.map((t) => topicLabel[t] || t), ...p.beats.slice(0, 3)].join(', ') || '—'),
+          h('td', { class: 'small muted' }, [...p.topics, ...p.beats.slice(0, 3)].map(coverLabel).join(', ') || '—'),
           h('td', {}, h('div', { class: 'tags' }, ...p.tags.map((t) => h('button', { class: 'badge tagchip', type: 'button', title: `Show everyone tagged ${t}`, onclick: () => setParam('tag', t) }, t)))),
           h('td', { class: 'small' }, p.latestArticle ? [p.latestArticle.url ? h('a', { href: p.latestArticle.url, target: '_blank', rel: 'noopener' }, p.latestArticle.title.slice(0, 64)) : p.latestArticle.title.slice(0, 64), p.latestArticle.date ? h('div', { class: 'muted' }, fmt.rel(p.latestArticle.date)) : null] : arts?.running && !p.checkedAt ? h('span', { class: 'muted' }, 'Looking…') : p.checkedAt ? h('span', { class: 'muted' }, 'None found') : '—'),
           h('td', {}, h('button', { class: 'link', type: 'button', onclick: () => removeOne(p) }, p.kind === 'contact' ? 'Remove' : 'Forget')));

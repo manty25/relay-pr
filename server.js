@@ -131,7 +131,7 @@ async function api(req, res, parts, url) {
     if (m === 'GET' && !b) {
       const cid = url.searchParams.get('campaign');
       const camp = cid ? loadCampaign(cid) : null;
-      const r = listPeople({ q: url.searchParams.get('q') || '', source: url.searchParams.get('source') || '', tag: url.searchParams.get('tag') || '', topic: url.searchParams.get('topic') || '', show: url.searchParams.get('show') || 'active', researchLimit: plan.directory.browseLimit, campaign: camp });
+      const r = listPeople({ q: url.searchParams.get('q') || '', source: url.searchParams.get('source') || '', tag: url.searchParams.get('tag') || '', cover: url.searchParams.get('cover') || url.searchParams.get('topic') || '', show: url.searchParams.get('show') || 'active', researchLimit: plan.directory.browseLimit, campaign: camp });
       if (camp) {
         const inList = new Set(camp.targets.map(personKeyOf));
         const emails = new Set(camp.targets.map((t) => t.email.toLowerCase()));

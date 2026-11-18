@@ -120,3 +120,24 @@ test('API: people list with campaign flags, tagging, do-not-contact, removal', a
   assert.equal((await fetch(`${base}/api/people/export.csv`)).status, 402, 'exporting researched journalists is Pro');
   assert.equal((await fetch(`${base}/api/people/export.csv?source=list`)).status, 200, 'your own list always exports');
 });
+
+test('filter dropdowns: topics include your "Covers" beats, and counts follow the other filters', () => {
+  importContactsCsv(`name,email,outlet,domain,beats,tags
+Fay Food,fay@foodmag.example,Food Mag,foodmag.example,food,Lifestyle`);
+  const r = people.listPeople();
+  const covers = Object.fromEntries(r.facets.covers.map((f) => [f.value, f.count]));
+  assert.ok(covers.transport >= 2, 'beats from your uploaded list are topics too');
+  assert.ok(covers.food >= 1);
+  assert.ok(covers.product_launch >= 1, 'Relay research topics as well');
+  // Choosing a tag narrows the topic counts, and vice versa
+  const friendly = people.listPeople({ tag: 'Friendly' });
+  assert.ok(!friendly.facets.covers.some((f) => f.value === 'food'), 'no Friendly food writers');
+  const food = people.listPeople({ cover: 'food' });
+  assert.deepEqual(food.rows.map((x) => x.name), ['Fay Food']);
+  assert.deepEqual(food.facets.tags.map((t) => t.value), ['Lifestyle']);
+  // Search narrows both
+  const fr = people.listPeople({ q: 'transport' });
+  assert.ok(fr.facets.covers.every((f) => f.count <= fr.total));
+  // A selected value stays listed even at zero
+  assert.ok(people.listPeople({ q: 'Fay', tag: 'Tier 1' }).facets.tags.some((t) => t.value === 'Tier 1' && t.count === 0));
+});

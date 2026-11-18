@@ -69,25 +69,41 @@ export function fitFor(p, c) {
   return Math.round(s * 10) / 10;
 }
 
-export function listPeople({ q = '', source = '', tag = '', topic = '', show = 'active', researchLimit = Infinity, campaign = null } = {}) {
+// Filters + facet counts. Facet counts follow the other active filters (search, source, show and the
+// other dropdown), so the dropdowns always reflect what you'd get by choosing an option.
+//   cover: a Relay topic id (e.g. product_launch) or a beat from "Covers" (e.g. apac-technology)
+export function listPeople({ q = '', source = '', tag = '', topic = '', cover = '', show = 'active', researchLimit = Infinity, campaign = null } = {}) {
+  cover ||= topic;
   const s = q.trim().toLowerCase();
-  let rows = allPeople();
-  if (show === 'dnc') rows = rows.filter((p) => p.doNotContact);
-  else if (show !== 'all') rows = rows.filter((p) => !p.doNotContact);
-  if (source) rows = rows.filter((p) => p.sources.includes(source));
-  if (tag) rows = rows.filter((p) => p.tags.includes(tag));
-  if (topic) rows = rows.filter((p) => p.topics.includes(topic));
+  let base = allPeople();
+  if (show === 'dnc') base = base.filter((p) => p.doNotContact);
+  else if (show !== 'all') base = base.filter((p) => !p.doNotContact);
+  if (source) base = base.filter((p) => p.sources.includes(source));
   if (s) {
     // Meaning-based: "France" = "French" = .fr domains; "AI" = "artificial intelligence"; plurals and accents ignored.
     const needs = parseQuery(s);
-    rows = rows.filter((p) => matchesQuery(needs, [p.name, p.outlet, p.email, p.domain, p.siteDomain, p.tags.join(' '), p.beats.join(' '), p.topics.join(' '), p.outletLine, p.latestArticle?.title, ...(p.raw?.recent || p.raw?.recentArticles || []).map((a) => a.title)].join(' '), [p.email, p.domain, p.siteDomain]));
+    base = base.filter((p) => matchesQuery(needs, [p.name, p.outlet, p.email, p.domain, p.siteDomain, p.tags.join(' '), p.beats.join(' '), p.topics.join(' '), p.outletLine, p.latestArticle?.title, ...(p.raw?.recent || p.raw?.recentArticles || []).map((a) => a.title)].join(' '), [p.email, p.domain, p.siteDomain]));
   }
+  const covers = (p) => [...new Set([...p.topics, ...p.beats])];
+  const hasTag = (p) => !tag || p.tags.includes(tag);
+  const hasCover = (p) => !cover || covers(p).includes(cover);
+  const count = (list, keysOf, selected) => {
+    const m = new Map();
+    for (const p of list) for (const k of keysOf(p)) if (k) m.set(k, (m.get(k) || 0) + 1);
+    if (selected && !m.has(selected)) m.set(selected, 0);
+    return [...m].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])).map(([value, n]) => ({ value, count: n }));
+  };
+  const facets = {
+    tags: count(base.filter(hasCover), (p) => p.tags, tag),
+    covers: count(base.filter(hasTag), covers, cover),
+  };
+  let rows = base.filter((p) => hasTag(p) && hasCover(p));
   if (campaign) rows = rows.map((p) => ({ ...p, fit: fitFor(p, campaign) })).sort((a, b) => b.fit - a.fit || a.name.localeCompare(b.name));
   else rows.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'contact' ? -1 : 1));
   // Plan gating applies to researched people only; your own list is always fully visible.
   let seenResearch = 0, hidden = 0;
   rows = rows.filter((p) => { if (p.kind !== 'journalist') return true; if (seenResearch++ < researchLimit) return true; hidden++; return false; });
-  return { total: rows.length + hidden, hidden, rows: rows.map(({ raw, ...p }) => p) };
+  return { total: rows.length + hidden, hidden, facets, rows: rows.map(({ raw, ...p }) => p) };
 }
 
 export function allTags() {
