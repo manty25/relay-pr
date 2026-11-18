@@ -10,7 +10,7 @@ import {
 } from './src/index.js';
 import { listCampaigns, deleteCampaign, saveCampaign, APP_ROOT, campaignDir, readAudit, dataDir } from './src/store.js';
 import { loadContacts, importContactsCsv, contactsCsv, loadSuppression, suppress } from './src/engine/contacts.js';
-import { outboxFiles, emailProvider } from './src/distribute/email.js';
+import { outboxFiles, emailProvider, sendTestEmail } from './src/distribute/email.js';
 import { socialAdapters } from './src/distribute/social.js';
 import { newsroomRoot } from './src/distribute/newsroom.js';
 import { resolveLink, recordClick } from './src/distribute/tracking.js';
@@ -239,6 +239,13 @@ async function api(req, res, parts, url) {
       if (c2 === 'monitor' && m === 'POST') return send(res, 200, await monitorCampaign(camp));
       if (c2 === 'replies' && m === 'POST') { const ev = logReply(camp, await readBody(req)); saveCampaign(camp); return send(res, 200, ev); }
       if (c2 === 'coverage' && m === 'POST') { const ev = addCoverage(camp, await readBody(req)); saveCampaign(camp); return send(res, 200, ev || { duplicate: true }); }
+      if (c2 === 'test-email' && m === 'POST') {
+        const body = await readBody(req);
+        const r = await sendTestEmail(camp, String(body.to || '').trim());
+        camp.compliance = { ...(camp.compliance || {}), testEmail: r };
+        saveCampaign(camp);
+        return send(res, 200, r);
+      }
       if (c2 === 'compliance' && m === 'GET') return send(res, 200, complianceChecks(camp));
       if (c2 === 'roles' && m === 'GET') return send(res, 200, rolesAllowed(camp));
       if (c2 === 'report' && m === 'GET') return send(res, 200, computeReport(camp));

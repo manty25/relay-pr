@@ -834,7 +834,18 @@ function importer(done) {
 }
 
 async function launch(c) {
-  const [comp, outbox] = await Promise.all([api(`campaigns/${c.id}/compliance`), api(`campaigns/${c.id}/outbox`).catch(() => [])]);
+  const [comp, outbox, st] = await Promise.all([api(`campaigns/${c.id}/compliance`), api(`campaigns/${c.id}/outbox`).catch(() => []), api('status').catch(() => ({}))]);
+  const PROVIDER = { resend: 'Resend', postmark: 'Postmark', sendgrid: 'SendGrid' };
+  const te = c.compliance?.testEmail;
+  const testTo = h('input', { type: 'email', value: te?.to || (/^[^\s@\[]+@/.test(c.brief.contact.email || '') ? c.brief.contact.email : ''), placeholder: 'you@yourcompany.com', 'aria-label': 'Send the test email to' });
+  const testNote = h('div', { class: 'small', 'aria-live': 'polite' }, te ? (te.ok ? h('span', { class: 'i-ok' }, `✓ Sent ${fmt.rel(te.at)} from ${te.from} to ${te.to}. Check it arrived (not in spam).`) : [h('span', { class: 'i-err' }, `Last test failed: ${te.error}`), te.hint ? h('div', { class: 'muted' }, te.hint) : null]) : null);
+  const delivery = h('section', { class: 'sec' }, h('h4', {}, '3 · Email delivery'),
+    st.email && st.email !== 'outbox'
+      ? h('p', { style: 'margin-top:12px' }, `Pitches go out through ${PROVIDER[st.email] || st.email}, from your sender address above. Replies come to ${/^[^\s@\[]+@[^\s@]+\.[^\s@]+$/.test(c.brief.contact.email || '') ? c.brief.contact.email : 'your sender address (add a media contact email to change that)'}.${st.testInbox ? ' In test mode, a copy of every pitch also goes to your test inbox.' : ''}`)
+      : h('p', { style: 'margin-top:12px' }, 'No email service is connected yet, so everything goes to the outbox. Add RELAY_EMAIL_PROVIDER and its key in your Render Environment tab.'),
+    st.email && st.email !== 'outbox' ? h('div', { class: 'row', style: 'margin-top:12px;gap:8px;flex-wrap:wrap' }, testTo,
+      h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => busy(e.currentTarget, 'Sending…', () => api(`campaigns/${c.id}/test-email`, { method: 'POST', body: { to: testTo.value } })).then((r) => { toast(r.ok ? `Test email sent to ${r.to}` : 'Test email failed'); route(); }) }, 'Send me a test email')) : null,
+    testNote);
   const legal = h('input', { type: 'checkbox', checked: c.compliance?.legalBasis === 'legitimate_interest' });
   const addr = h('input', { type: 'text', value: c.brief.postalAddress, placeholder: 'Street, city, postcode, country' });
   const sName = h('input', { type: 'text', value: c.brief.sender.name });
@@ -850,6 +861,7 @@ async function launch(c) {
         h('div', { class: 'fields', style: 'margin-top:14px' }, h('label', { class: 'f' }, 'Sender name', sName), h('label', { class: 'f' }, 'Sender email', sEmail), h('label', { class: 'f full' }, 'Postal address (CAN-SPAM)', addr),
           h('label', { class: 'check full' }, legal, 'We contact journalists under legitimate interest (GDPR Art. 6(1)(f)) and honour every opt-out immediately.')),
         h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => patch(c, { brief: { postalAddress: addr.value, sender: { name: sName.value, email: sEmail.value } }, compliance: { legalBasis: legal.checked ? 'legitimate_interest' : '' } }, e.currentTarget, 'Saved') }, 'Save')),
+      delivery,
       c.jobs?.length ? h('details', { class: 'sec', open: c.jobs.length <= 25 }, h('summary', { style: 'cursor:pointer' }, h('h4', { style: 'display:inline-flex;width:100%' }, `Send log — ${c.jobs.length} items`, h('span', {}, Object.entries(counts).map(([k, v]) => `${v} ${k}`).join(' · ')))),
         h('div', { class: 'tablewrap', style: 'border-top:0' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Stage'), h('th', {}, 'Item'), h('th', {}, 'Due'), h('th', {}, 'Status'))),
           h('tbody', {}, ...c.jobs.map((j) => h('tr', {}, h('td', {}, j.stage.replace(/_/g, ' ')), h('td', {}, `${j.type}: ${j.ref.replace(/^[a-z_]+:/, '').replace(/^desk_/, '')}`), h('td', { class: 'num muted' }, fmt.dt(j.dueAt, c.brief.timezone)),

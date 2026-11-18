@@ -86,3 +86,31 @@ export function outboxFiles(cid) {
   for (const sub of fs.readdirSync(dir)) for (const f of fs.readdirSync(path.join(dir, sub))) out.push(`${sub}/${f}`);
   return out.sort();
 }
+
+// "Send me a test email": one real message through the connected provider, from this campaign's sender,
+// to an address the user names. Proves the sender domain is verified before any journalist is contacted.
+export async function sendTestEmail(campaign, to) {
+  const provider = emailProvider();
+  const b = campaign.brief;
+  const from = String(b.sender.email || '').trim().toLowerCase();
+  const at = new Date().toISOString();
+  const fail = (error, hint = '') => ({ ok: false, provider, from, to, at, error, hint });
+  if (provider === 'outbox') return fail('No email service is connected.', 'Set RELAY_EMAIL_PROVIDER=resend and RESEND_API_KEY in your Render Environment tab, then redeploy.');
+  if (!isEmail(from)) return fail('Set a sender email first.');
+  if (!isEmail(to)) return fail('Enter the address to send the test to.');
+  const pitch = (campaign.assets?.pitches || [])[0];
+  const subject = `[Relay test] ${pitch?.subject || campaign.name}`;
+  const text = `This is a test from Relay. It was sent through ${provider} from ${from}, exactly as pitches will be.\nCheck that it arrived in your inbox (not spam), and that replying goes to ${isEmail(b.contact.email) ? b.contact.email : from}.\n\n— Sample pitch —\n\n${pitch?.body || '(no pitch yet)'}`;
+  try {
+    await deliver(provider, { from: `${b.sender.name || b.contact.name || b.org} <${from}>`, to, subject, text, replyTo: isEmail(b.contact.email) ? b.contact.email : undefined, listUnsubscribe: from });
+  } catch (e) {
+    const msg = String(e.message || e);
+    const domain = from.split('@')[1];
+    const hint = /domain|verif|not allowed|testing emails|own email/i.test(msg) ? `Verify ${domain} in ${provider} (Domains → add the DNS records it shows), wait for it to say Verified, then try again.`
+      : /401|403|api key|unauthor/i.test(msg) ? `The ${provider} key was refused. Check the key in your Render Environment tab.` : '';
+    audit({ campaignId: campaign.id, channel: 'email', mode: 'test-email', to, provider, error: msg });
+    return fail(msg, hint);
+  }
+  audit({ campaignId: campaign.id, channel: 'email', mode: 'test-email', to, provider });
+  return { ok: true, provider, from, to, at };
+}

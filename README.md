@@ -157,6 +157,16 @@ journalists, to open their card:
 Tables also show each person's outlet type and their latest piece ("Wrote 3 days ago: …"). After research,
 outlet summaries and recent articles for the media list are filled in automatically in the background.
 
+### Sending email
+
+Pitches go out through Resend, Postmark or SendGrid, from the sender address you set on the campaign's Launch tab.
+Replies go to the media contact email. To connect Resend, set `RELAY_EMAIL_PROVIDER=resend` and `RESEND_API_KEY` in
+Render's Environment tab, then verify your domain in Resend (Domains → add the DNS records it shows).
+
+On a campaign's **Launch** tab, **Send me a test email** sends one real message through the provider, from the
+campaign's sender address to the address you choose. A failure says what to fix, for example which domain to
+verify. Live launch needs a successful test from the current sender address.
+
 ### The New Campaign page
 
 - **Sector (optional):** "It's ___ news from…". Leave it empty and Relay works it out; type one (any industry, even one

@@ -15,6 +15,7 @@ export function complianceChecks(campaign) {
     { id: 'OP-6d', label: 'Every pitch has an opt-out line', pass: (campaign.assets?.pitches || []).every((p) => /no thanks/i.test(p.body)) },
     { id: 'TG-real', label: 'Media list uses real, imported contacts (no demo desks)', pass: targets.length > 0 && !targets.some((t) => t.demo) },
     { id: 'OP-send', label: 'Email provider configured (Resend, Postmark or SendGrid)', pass: emailProvider() !== 'outbox' },
+    { id: 'OP-send-test', label: 'Test email delivered from this sender address', pass: Boolean(c.testEmail?.ok) && c.testEmail.from === String(b.sender.email || '').trim().toLowerCase() && emailProvider() === c.testEmail.provider },
     { id: 'RS-6', label: 'Researched addresses verified in the last 12 months', pass: !targets.some((t) => t.emailStale) },
   ];
   return { pass: checks.every((x) => x.pass), checks };

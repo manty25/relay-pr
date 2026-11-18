@@ -436,7 +436,7 @@ export async function updateCampaign(c, patch = {}) {
       (c.pitchOverrides ||= {})[p.id] = { subject: p.subject, body: p.body };
     }
   }
-  if (patch.compliance) c.compliance = { ...c.compliance, ...patch.compliance };
+  if (patch.compliance) { const { testEmail, ...rest } = patch.compliance; c.compliance = { ...c.compliance, ...rest }; }
   if (patch.mode && patch.mode !== c.mode && ['test', 'live'].includes(patch.mode) && !['live', 'complete'].includes(c.status)) {
     c.mode = patch.mode;
     retarget(c);
