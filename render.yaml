@@ -29,3 +29,7 @@ services:
         sync: false
       - key: APOLLO_API_KEY     # optional: Apollo.io fills missing reporter addresses
         sync: false
+      - key: RESEND_API_KEY     # optional: sends pitches through Resend from your verified domain
+        sync: false
+      - key: RELAY_TEST_INBOX   # optional: in test mode, also email every pitch to this address
+        sync: false
