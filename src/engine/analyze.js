@@ -30,9 +30,15 @@ export function classify(brief) {
   const confidence = brief.topicOverride ? 1 : clamp(Math.round((top.score / total) * 100) / 100 + 0.2, 0.2, 0.99);
 
   // Specific beats come from the vocabulary of the story; generic ones from the topic playbook.
-  const specific = Object.entries(BEAT_HINTS).filter(([, kws]) => kws.some((k) => has(text, k))).map(([b]) => b);
+  // A sector the user typed wins: its beat leads, or it becomes its own beat if Relay has no word for it.
+  const stated = norm(brief.sector || '');
+  const statedBeats = stated.trim() ? Object.entries(BEAT_HINTS).filter(([b, kws]) => has(stated, b.replace(/-/g, ' ')) || kws.some((k) => has(stated, k))).map(([b]) => b) : [];
+  const ownBeat = stated.trim() && !statedBeats.length ? stated.trim().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '').slice(0, 30) : '';
+  const fromText = Object.entries(BEAT_HINTS).filter(([, kws]) => kws.some((k) => has(text, k))).map(([b]) => b);
+  const specific = unique([...(ownBeat ? [ownBeat] : []), ...statedBeats, ...fromText]);
   // A product launch by a law firm or insurer is trade/business news, not tech news.
-  const sectorOnly = specific.length && !specific.some((b) => TECH_BEATS.has(b) || ['transport', 'energy', 'climate', 'health', 'finance'].includes(b)) && !has(text, 'app') && !has(text, 'software') && !has(text, 'platform');
+  const judged = stated.trim() ? statedBeats : specific;
+  const sectorOnly = specific.length && !judged.some((b) => TECH_BEATS.has(b) || ['transport', 'energy', 'climate', 'health', 'finance'].includes(b)) && !has(text, 'app') && !has(text, 'software') && !has(text, 'platform');
   const generic = sectorOnly ? ['business', ...topic.beats.filter((b) => !['tech', 'consumer-tech'].includes(b))] : topic.beats;
   const beats = new Set([...specific, ...generic]);
   return {
@@ -42,6 +48,7 @@ export function classify(brief) {
     alternatives: scores.filter((s) => s.id !== top.id && s.score > 0).slice(0, 3).map((s) => ({ id: s.id, label: s.label })),
     beats: unique([...beats]),
     specificBeats: specific,
+    sectorPhrase: stated.trim(),
     regulated: Boolean(topic.regulated && brief.publicCompany),
     crisis: Boolean(topic.crisis),
   };

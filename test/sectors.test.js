@@ -72,3 +72,15 @@ test('an unknown sector: hinted trade publications are checked against live news
 test('searching the database by sector finds synonyms (lawyers = legal)', () => {
   assert.ok(matchesQuery(parseQuery('lawyers'), 'Covers legal tech and law firms'));
 });
+
+test('a sector typed on the New Campaign page leads the search, even one Relay has no words for', async () => {
+  const { previewBrief } = await import('../src/engine/campaign.js');
+  const p = previewBrief({ org: 'Kettle Vet', news: 'Kettle Vet opens a 24-hour clinic for exotic pets', sector: 'veterinary care' });
+  assert.equal(p.sector, 'veterinary care');
+  assert.equal(p.terms[0], 'veterinary care');
+  assert.ok(p.specificBeats.includes('veterinary-care'));
+  assert.ok(!p.beats.includes('tech'));
+  const l = previewBrief({ org: 'Harbor Legal', news: 'Harbor Legal launches fixed-fee legal services for small businesses' });
+  assert.equal(l.sector, 'legal');
+  assert.equal(l.terms[0], 'legal services');
+});

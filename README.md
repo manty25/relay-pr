@@ -157,6 +157,23 @@ journalists, to open their card:
 Tables also show each person's outlet type and their latest piece ("Wrote 3 days ago: …"). After research,
 outlet summaries and recent articles for the media list are filled in automatically in the background.
 
+### The New Campaign page
+
+- **Sector (optional):** "It's ___ news from…". Leave it empty and Relay works it out; type one (any industry, even one
+  Relay has no words for) and it leads the search.
+- **Relay reads this as…:** a live line under the sentence shows the topic and sector Relay sees and the phrases it
+  will search news for, so you can correct it before building.
+- **Website:** press **Read website** and Relay reads your home page plus your about, services and press pages
+  (respecting robots.txt, at most 4 pages, cached a day, public sites only). With Claude it fills in, for you
+  to check:
+  - the About text
+  - who it's for
+  - the sector
+  - up to 6 facts the site states, each with a number that really appears on the site
+
+  Without Claude it fills in the About text from the site's own description. When you build, the site is also
+  given to Claude as background for the release and boilerplate, and numbers from it pass the fact check.
+
 ### Any sector
 
 Every new campaign works out which beat its story belongs to, whether that's legal services, defense, consumer goods,

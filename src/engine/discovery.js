@@ -79,7 +79,7 @@ export function topicQuery(brief, cls, hint = null) {
   const text = ` ${[brief.news, ...(brief.facts || [])].join(' ').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').replace(/\s+/g, ' ')} `;
   // 1. Sector phrases (e.g. "legal services", "law firm") lead: they are what the right reporters write about.
   // Claude's phrases for the beat come first when present; Relay's own vocabulary follows.
-  const sector = (hint?.phrases || []).map((p) => p.toLowerCase());
+  const sector = [...new Set([cls.sectorPhrase, ...(hint?.phrases || []).map((p) => p.toLowerCase())].filter(Boolean))];
   for (const b of [...(cls.specificBeats || [])].sort((x, y) => (SECTOR_PHRASES[y] ? 1 : 0) - (SECTOR_PHRASES[x] ? 1 : 0))) for (const p of SECTOR_PHRASES[b] || (BEAT_HINTS[b] || []).filter((k) => k.length > 3)) if (text.includes(` ${p} `) && !sector.some((x) => x.includes(p) || p.includes(x))) sector.push(p);
   // 2. Then the most distinctive words of the headline.
   const words = brief.news.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/)

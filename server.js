@@ -21,7 +21,7 @@ import { searchDirectory, directoryStats, forgetJournalist, directoryCsv } from 
 import { currentPlan, PLANS, upgradeUrl } from './src/plans.js';
 import { apolloEnabled, apolloCap } from './src/engine/apollo.js';
 import { listPeople, allTags, peopleStats, tagPeople, removePerson, personById, personKeyOf, fitFor } from './src/engine/people.js';
-import { rolesAllowed } from './src/engine/campaign.js';
+import { rolesAllowed, previewBrief, websiteSuggestions } from './src/engine/campaign.js';
 import { ensureOutletProfile, ensureRecentArticles, articlesFor, outletProfile, startArticleBackfill, backfillStatus } from './src/engine/profiles.js';
 import { allPeople } from './src/engine/people.js';
 import { csvEscape } from './src/util.js';
@@ -121,6 +121,8 @@ async function api(req, res, parts, url) {
   const [, , a, b, c2, ...rest] = parts; // '', 'api', a, b, c2
   if (a === 'status' && m === 'GET') return send(res, 200, status());
   if (a === 'knowledge' && m === 'GET') return send(res, 200, { topics: TOPICS.map((t) => ({ id: t.id, label: t.label, wire: t.wire })), channels: CHANNELS, sample: SAMPLE_BRIEF });
+  if (a === 'website' && m === 'POST') { const body = await readBody(req); return send(res, 200, await websiteSuggestions(body.brief || body, { force: Boolean(body.force) })); }
+  if (a === 'preview' && m === 'POST') { const body = await readBody(req); return send(res, 200, previewBrief(body.brief || body)); }
   if (a === 'audit' && m === 'GET') return send(res, 200, readAudit(b ? (e) => e.campaignId === b : undefined, 300));
 
   if (a === 'plan' && m === 'GET') return send(res, 200, { current: currentPlan().id, plans: Object.values(PLANS).map((p) => ({ ...p, research: p.research, directory: { ...p.directory, reusePerCampaign: Number.isFinite(p.directory.reusePerCampaign) ? p.directory.reusePerCampaign : null, browseLimit: Number.isFinite(p.directory.browseLimit) ? p.directory.browseLimit : null } })), upgradeUrl: upgradeUrl() });

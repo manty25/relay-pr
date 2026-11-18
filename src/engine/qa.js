@@ -8,7 +8,7 @@ const hypeIn = (t) => HYPE.filter((h) => new RegExp(`\\b${h.replace(/-/g, '[- ]'
 const digits = (t) => (String(t).match(/\d[\d,.]*/g) || []).map((n) => n.replace(/[,.]+$/, '').replace(/,/g, ''));
 const allCaps = (t) => (String(t).match(/\b[A-Z]{5,}\b/g) || []);
 
-export function runQa({ assets, brief, launchAt }) {
+export function runQa({ assets, brief, launchAt, sourceText = '' }) {
   const checks = [];
   const add = (id, asset, pass, message, severity = 'error') => checks.push({ id, asset, pass: Boolean(pass), severity, message });
   const pr = assets.pressRelease;
@@ -70,13 +70,13 @@ export function runQa({ assets, brief, launchAt }) {
   add('AE-3', 'fact sheet', assets.factSheet.facts.length >= 5, `${assets.factSheet.facts.length} facts (≥ 5). Add facts to the brief to strengthen AI-search citations.`, 'warn');
   add('AE-5', 'faq', assets.faq.length >= 4 && assets.faq.length <= 6, `${assets.faq.length} FAQ entries (4–6).`, 'warn');
   const allowed = new Set([
-    ...digits([brief.news, ...brief.facts, brief.about, brief.website, brief.productUrl, brief.mediaKitUrl, brief.contact.phone, brief.contact.email, brief.quote, brief.secondQuote?.text, brief.audience, brief.ticker, brief.city, brief.org].join(' ')),
+    ...digits([brief.news, ...brief.facts, brief.about, brief.website, brief.productUrl, brief.mediaKitUrl, brief.contact.phone, brief.contact.email, brief.quote, brief.secondQuote?.text, brief.audience, brief.ticker, brief.city, brief.org, sourceText].join(' ')),
     ...digits(new Date(launchAt).toISOString().slice(0, 10).replace(/-0?/g, ' ')),
     ...digits(new Date(launchAt).getUTCFullYear()), '1', '2', '3',
   ]);
   const scanned = [lede, ...pr.paragraphs.slice(1), pr.headline, pr.subhead, ...assets.faq.map((f) => f.a), ...Object.values(assets.social || {}).map((p) => p.text), assets.newsletter?.body || ''].join(' ').replace(/https?:\/\/\S+/g, '');
   const unknown = [...new Set(digits(scanned).filter((n) => !allowed.has(n) && !allowed.has(n.replace(/\.0+$/, ''))))];
-  add('AE-4', 'all assets', !unknown.length, unknown.length ? `Numbers not found in the brief: ${unknown.slice(0, 6).join(', ')} — verify or remove (possible invented facts).` : 'Every number traces back to the brief.');
+  add('AE-4', 'all assets', !unknown.length, unknown.length ? `Numbers not found in the brief or website: ${unknown.slice(0, 6).join(', ')} — verify or remove (possible invented facts).` : 'Every number traces back to the brief or the website.');
 
   // Placeholders (DS-4)
   const tkAssets = [];

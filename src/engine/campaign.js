@@ -13,7 +13,8 @@ import { currentPlan } from '../plans.js';
 import { personById, asContact, fitFor, personKeyOf } from './people.js';
 import { outletFacts, enrichCampaignProfiles } from './profiles.js';
 import { writeOffline, quoteParagraph } from '../generate/offline.js';
-import { llmAvailable, writeWithClaude, repairWithClaude, inferCoverage, MODEL } from '../generate/claude.js';
+import { llmAvailable, writeWithClaude, repairWithClaude, inferCoverage, extractFromWebsite, MODEL } from '../generate/claude.js';
+import { readWebsite, siteText, offlineSuggestions } from './website.js';
 import { pitchFor, followUpFor, releaseText, wirePackage, newsroomHtml, defaultOpener } from '../generate/compose.js';
 import { TK } from './brief.js';
 import { sendEmail } from '../distribute/email.js';
@@ -42,7 +43,8 @@ export async function createCampaign(input, opts = {}) {
   const brief = normalizeBrief(input);
   const factSheet = buildFactSheet(brief);
   const cls = classify(brief);
-  const hint = await coverageHint(brief, cls, opts);
+  const site = await websiteFor(brief, opts);
+  const hint = await coverageHint(site?.description ? { ...brief, facts: [...brief.facts, `About the organisation (from its website): ${site.description}`] } : brief, cls, opts);
   if (hint) cls.sector = hint.sector;
   const nw = newsworthiness(brief, cls);
   const choice = chooseChannels(brief, cls, nw);
@@ -57,8 +59,9 @@ export async function createCampaign(input, opts = {}) {
     mode: opts.mode === 'live' ? 'live' : 'test',
     status: 'draft',
     brief,
-    analysis: { sector: hint?.sector || null, tradeOutlets: hint?.outlets || [], topic: cls.topic, confidence: cls.confidence, alternatives: cls.alternatives, beats: cls.beats, specificBeats: cls.specificBeats, regulated: cls.regulated, crisis: cls.crisis, matched: cls.matched, newsworthiness: nw },
+    analysis: { sector: hint?.sector || brief.sector || null, tradeOutlets: hint?.outlets || [], topic: cls.topic, confidence: cls.confidence, alternatives: cls.alternatives, beats: cls.beats, specificBeats: cls.specificBeats, regulated: cls.regulated, crisis: cls.crisis, matched: cls.matched, newsworthiness: nw },
     plan: { channels: choice.channels, notes: [...choice.notes, ...timeline.notes], flags, launchAt: launch.toISOString(), timeline: timeline.steps },
+    site: site ? { url: site.url, siteName: site.siteName, description: site.description, pages: site.pages, fetchedAt: site.fetchedAt } : null,
     compliance: {},
     events: [],
     jobs: [],
@@ -76,6 +79,27 @@ export async function createCampaign(input, opts = {}) {
   return c;
 }
 
+// The organisation's own website, read politely and cached for a day. Skipped offline; fails soft.
+async function websiteFor(brief, opts = {}) {
+  if (!brief.website || opts.discover === false || (process.env.RELAY_OFFLINE === '1' && !opts.siteFetch)) return null;
+  try {
+    const r = await Promise.race([readWebsite(brief.website, { fetchImpl: opts.siteFetch || opts.fetchImpl, extraUrls: brief.productUrl ? [brief.productUrl] : [] }), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 20000))]);
+    return r.ok ? r : null;
+  } catch { return null; }
+}
+
+// "Read website" on the New Campaign page: what the site says, as suggestions for the brief (the user checks them).
+export async function websiteSuggestions(input, opts = {}) {
+  const brief = normalizeBrief({ news: 'x', ...input });
+  const site = await readWebsite(input.website || brief.website, { fetchImpl: opts.fetchImpl, extraUrls: brief.productUrl ? [brief.productUrl] : [], force: opts.force });
+  if (!site.ok) return { ok: false, reason: site.reason };
+  let suggestions = offlineSuggestions(site, brief), by = 'site description';
+  if (llmAvailable() && opts.useClaude !== false) {
+    try { suggestions = await extractFromWebsite({ brief: { ...brief, news: input.news || '' }, site, text: siteText(site) }); by = 'claude'; } catch { /* keep the offline suggestion */ }
+  }
+  return { ok: true, by, site: { url: site.url, siteName: site.siteName, description: site.description, pages: site.pages.map((p) => ({ url: p.url, title: p.title })) }, suggestions };
+}
+
 // Any sector: Claude names the beat, the phrases its reporters use and its trade publications (verified against
 // live news in discovery). Without Claude, Relay's own sector vocabulary and the release's own words are used.
 async function coverageHint(brief, cls, opts) {
@@ -86,6 +110,14 @@ async function coverageHint(brief, cls, opts) {
     applyHint(cls, hint);
     return hint;
   } catch { return null; }
+}
+
+// What the New Campaign page shows while you type: how Relay reads the story and what it will search for.
+export function previewBrief(input) {
+  const brief = normalizeBrief(input);
+  const cls = classify(brief);
+  const q = topicQuery(brief, cls);
+  return { topic: cls.topic, sector: brief.sector || (cls.specificBeats[0] || '').replace(/-/g, ' '), beats: cls.beats, specificBeats: cls.specificBeats, terms: q.terms, local: q.local || '', claude: llmAvailable() };
 }
 
 export function applyHint(cls, hint) {
@@ -249,7 +281,8 @@ export async function generateAssets(c, { useClaude } = {}) {
   const t0 = Date.now();
   const { brief } = c;
   const factSheet = buildFactSheet(brief);
-  const ctx = { brief, analysis: c.analysis, factSheet, targets: c.targets, launchAt: c.plan.launchAt, terms: c.discovery?.query?.terms || [] };
+  const ctx = { brief, analysis: c.analysis, factSheet, targets: c.targets, launchAt: c.plan.launchAt, terms: c.discovery?.query?.terms || [], site: c.site };
+  const sourceText = siteText(c.site);
   let out = null, usage = null, writer = { name: 'offline', model: null, note: '' };
   const wantClaude = useClaude ?? llmAvailable();
 
@@ -260,7 +293,7 @@ export async function generateAssets(c, { useClaude } = {}) {
       usage = { input_tokens: res.usage.input_tokens, output_tokens: res.usage.output_tokens };
       writer = { name: 'claude', model: res.model || MODEL, note: '' };
       let assets = assemble(c, out, factSheet);
-      let qa = runQa({ assets, brief, launchAt: c.plan.launchAt });
+      let qa = runQa({ assets, brief, launchAt: c.plan.launchAt, sourceText });
       const fixable = qa.checks.filter((x) => !x.pass && x.severity === 'error' && x.id !== 'DS-4');
       if (fixable.length) {
         const fixed = await repairWithClaude(ctx, res, fixable);
@@ -273,7 +306,8 @@ export async function generateAssets(c, { useClaude } = {}) {
       out = null;
     }
   }
-  if (!out) out = writeOffline({ ...ctx, launchAt: c.plan.launchAt, newsroomUrl: '{newsroom}' });
+  // Offline, an empty boilerplate falls back to the website's own description.
+  if (!out) out = writeOffline({ ...ctx, brief: c.site && !brief.about ? { ...brief, about: offlineSuggestions(c.site, brief).about } : brief, launchAt: c.plan.launchAt, newsroomUrl: '{newsroom}' });
 
   c.writer = writer;
   c.llmUsage = usage;
@@ -288,7 +322,7 @@ export async function generateAssets(c, { useClaude } = {}) {
 export function reassemble(c) {
   const factSheet = buildFactSheet(c.brief);
   c.assets = assemble(c, c.writerOutput, factSheet);
-  c.qa = runQa({ assets: c.assets, brief: c.brief, launchAt: c.plan.launchAt });
+  c.qa = runQa({ assets: c.assets, brief: c.brief, launchAt: c.plan.launchAt, sourceText: siteText(c.site) });
   c.plan.keyMessages = keyMessages(c.brief, factSheet, c.assets.pressRelease.quotes[0]);
   c.estimates = estimate({ plan: c.plan, targets: c.targets, nw: c.analysis.newsworthiness, llmUsage: c.llmUsage });
   return c;
@@ -411,7 +445,7 @@ export async function updateCampaign(c, patch = {}) {
   }
   if (patch.retarget && !c.jobs?.length) { retarget(c); reassemble(c); c.approvedAt = null; }
   if (patch.selection) updateSelection(c, patch.selection);
-  c.qa = runQa({ assets: c.assets, brief: c.brief, launchAt: c.plan.launchAt });
+  c.qa = runQa({ assets: c.assets, brief: c.brief, launchAt: c.plan.launchAt, sourceText: siteText(c.site) });
   saveCampaign(c);
   return c;
 }

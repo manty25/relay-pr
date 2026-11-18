@@ -81,6 +81,7 @@ export function normalizeBrief(input) {
     about: (b.about || '').trim(),
     facts: extraFacts,
     audience: (b.audience || '').trim(),
+    sector: String(b.sector || '').trim().slice(0, 60),
     goal: (b.goal || '').trim(),
     productUrl: (b.productUrl || b.link || '').trim(),
     mediaKitUrl: (b.mediaKitUrl || '').trim(),

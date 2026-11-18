@@ -122,6 +122,8 @@ async function viewNew() {
   const city = tok('city', 'your city', 'City for the dateline', 10);
   const when = tok('when', 'the next good slot', 'Announcement date', 14);
   const spk = tok('spokesperson', 'a spokesperson', 'Spokesperson name', 12);
+  const sector = tok('sector', 'any sector', 'Sector or industry (optional)', 12);
+  const reads = h('p', { class: 'reads', 'aria-live': 'polite' });
   const budget = h('select', { class: 'tok', name: 'budget', 'aria-label': 'Budget' }, h('option', { value: 'free' }, 'free'), h('option', { value: 'lean', selected: true }, 'lean'), h('option', { value: 'full' }, 'full'));
   const touched = new Set();
   for (const t of [org, city]) t.addEventListener('input', () => touched.add(t));
@@ -129,6 +131,24 @@ async function viewNew() {
     if (!touched.has(org)) org.value = guessOrg(news.value);
     if (!touched.has(city)) city.value = guessCity(news.value);
   });
+  // Live read-back: how Relay classifies the story and what it will search for (offline, no credits).
+  let previewTimer = null;
+  const preview = () => {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(async () => {
+      if (news.value.trim().length < 12) { reads.replaceChildren(); sector.placeholder = 'any sector'; return; }
+      const r = await api('preview', { method: 'POST', body: { brief: readBrief() } }).catch(() => null);
+      if (!r) return;
+      sector.placeholder = r.sector || 'any sector';
+      reads.replaceChildren(...[
+        h('span', { class: 'eyebrow' }, 'Relay reads this as'), ' ',
+        h('strong', {}, `${r.topic.label}${r.sector ? ` · ${r.sector}` : ''}`), '. ',
+        r.terms.length ? ['It will search recent news for ', ...r.terms.flatMap((t, i) => [i ? ', ' : '', h('em', {}, `“${t}”`)]), r.local ? ` near ${r.local}` : '', '. '] : '',
+        r.claude ? 'Claude will also name the trade press for this sector, and Relay checks each one has recent coverage before using it.' : 'Not the right sector? Type it in above.'].flat(3).filter((x) => x !== ''));
+    }, 350);
+  };
+  news.addEventListener('input', preview);
+  sector.addEventListener('input', preview);
 
   const f = (name, label, attrs = {}) => h('label', { class: `f${attrs.full ? ' full' : ''}` }, label,
     attrs.textarea ? h('textarea', { name, rows: attrs.rows || 3, placeholder: attrs.placeholder || '' }) : h('input', { name, type: attrs.type || 'text', placeholder: attrs.placeholder || '' }));
@@ -140,7 +160,6 @@ async function viewNew() {
       f('regionName', 'State or country', { placeholder: 'Texas' }),
       f('contactName', 'Media contact'),
       f('contactEmail', 'Media contact email', { type: 'email' }),
-      f('website', 'Website', { type: 'url', placeholder: 'https://' }),
       f('productUrl', 'Announcement link', { type: 'url' }),
       f('about', 'About the organisation', { textarea: true, rows: 2, full: true }),
       f('audience', 'Who is it for?'),
@@ -148,7 +167,31 @@ async function viewNew() {
       h('label', { class: 'check full' }, h('input', { type: 'checkbox', name: 'publicCompany' }), 'Publicly listed company — applies disclosure rules (tier-1 wire, no exclusives)'),
       h('label', { class: 'check full' }, h('input', { type: 'checkbox', name: 'claimsSubstantiated' }), 'Claims like “first” or “only” are substantiated'),
     ));
+  // The organisation's website: Relay reads it and suggests the About text, audience, sector and facts.
+  const site = h('input', { class: 'siteurl', type: 'url', name: 'website', placeholder: 'yourcompany.com', 'aria-label': 'Your website', autocomplete: 'url' });
+  const siteNote = h('span', { class: 'small muted', 'aria-live': 'polite' }, 'Relay reads it for background, the About text and facts you can check.');
+  const readBtn = h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => readSite(e.currentTarget) }, 'Read website');
+  async function readSite(btn) {
+    if (!site.value.trim()) { site.focus(); return; }
+    const r = await busy(btn, 'Reading…', () => api('website', { method: 'POST', body: { brief: readBrief() } })).catch((e) => ({ ok: false, reason: e.message }));
+    if (!r.ok) { siteNote.textContent = `Couldn’t read it: ${r.reason}.`; return; }
+    const { suggestions: sg } = r, filled = [];
+    const setIf = (n, v, label) => { const el = form.elements[n]; if (el && v && !el.value.trim()) { el.value = v; filled.push(label); } };
+    setIf('about', sg.about, 'About');
+    setIf('audience', sg.audience, 'who it’s for');
+    if (sg.sector && !sector.value.trim()) { sector.value = sg.sector; filled.push('sector'); }
+    const factsEl = form.elements.facts, have = factsEl.value.toLowerCase();
+    const add = (sg.facts || []).map((x) => x.text).filter((t) => !have.includes(t.toLowerCase()));
+    if (add.length) { factsEl.value = [factsEl.value.trim(), ...add].filter(Boolean).join('\n'); filled.push(`${add.length} fact${add.length === 1 ? '' : 's'}`); }
+    if (filled.length) details.open = true;
+    siteNote.textContent = `Read ${r.site.pages.length} page${r.site.pages.length === 1 ? '' : 's'} from ${new URL(r.site.url).hostname}. ${filled.length ? `Filled in ${filled.join(', ')} — check them before you build.` : 'Nothing new to add; it will still be used as background for the release.'}`;
+    preview();
+  }
+  const siteRow = h('div', { class: 'siterow' }, h('label', { class: 'eyebrow', for: 'siteurl' }, 'Website'), site, readBtn, siteNote);
+  site.id = 'siteurl';
+  site.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); readSite(readBtn); } });
   const form = h('form', { onsubmit: (e) => e.preventDefault() }, details);
+  form.addEventListener('input', preview);
   const steps = h('ol', { class: 'steps' }, ...STEPS.map((s) => h('li', {}, s)));
   const buildBtn = h('button', { class: 'btn pri', type: 'button', onclick: () => submit(false) }, 'Build the campaign', kbd('⌘↵'));
   const testBtn = h('button', { class: 'btn ghost', type: 'button', onclick: () => submit(true) }, 'Run a full test', kbd('⇧⌘↵'));
@@ -156,19 +199,19 @@ async function viewNew() {
   function readBrief() {
     const d = Object.fromEntries(new FormData(form));
     return {
-      news: news.value, org: org.value, city: city.value, launchAt: parseWhen(when.value), budget: budget.value,
+      news: news.value, org: org.value, city: city.value, sector: sector.value, launchAt: parseWhen(when.value), budget: budget.value,
       spokesperson: { name: spk.value, title: d.spokespersonTitle }, contact: { name: d.contactName, email: d.contactEmail },
-      regionName: d.regionName, region: d.region, website: d.website, productUrl: d.productUrl, facts: d.facts, quote: d.quote,
+      regionName: d.regionName, region: d.region, website: site.value, productUrl: d.productUrl, facts: d.facts, quote: d.quote,
       about: d.about, audience: d.audience, publicCompany: Boolean(d.publicCompany), claimsSubstantiated: Boolean(d.claimsSubstantiated),
     };
   }
   function fillSample() {
     const s = knowledge.sample; if (!s) return;
-    news.value = s.news; org.value = s.org; city.value = s.city; spk.value = s.spokesperson.name; touched.add(org); touched.add(city);
+    news.value = s.news; org.value = s.org; sector.value = ''; city.value = s.city; spk.value = s.spokesperson.name; touched.add(org); touched.add(city);
     const set = (n, v) => { if (form.elements[n]) form.elements[n].value = v || ''; };
     set('spokespersonTitle', s.spokesperson.title); set('regionName', s.regionName); set('contactName', s.contact.name); set('contactEmail', s.contact.email);
-    set('website', s.website); set('facts', s.facts.join('\n')); set('about', s.about); set('audience', s.audience);
-    details.open = true; news.focus();
+    site.value = s.website || ''; set('facts', s.facts.join('\n')); set('about', s.about); set('audience', s.audience);
+    details.open = true; news.focus(); preview();
   }
   async function submit(fullTest) {
     const brief = readBrief();
@@ -192,7 +235,9 @@ async function viewNew() {
       h('div', { class: 'eyebrow' }, `New campaign · ${today}`),
       h('h1', { class: 'hero' }, 'What’s the ', h('em', {}, 'story'), '?'),
       h('div', { class: 'newsbox' }, h('div', { class: 'bar eyebrow' }, h('span', {}, 'The news, in a sentence'), h('span', {}, kbd('⌘↵'), ' to build')), news),
-      h('p', { class: 'sentence' }, 'It’s from ', org, ' in ', city, ', announced ', when, ', with ', spk, ' speaking, on a ', budget, ' budget.'),
+      h('p', { class: 'sentence' }, 'It’s ', sector, ' news from ', org, ' in ', city, ', announced ', when, ', with ', spk, ' speaking, on a ', budget, ' budget.'),
+      reads,
+      siteRow,
       form,
       h('div', { class: 'actions' }, buildBtn, testBtn, knowledge.sample ? h('button', { class: 'link', type: 'button', onclick: fillSample }, 'Use the sample brief') : null)),
     h('aside', { class: 'aside' },

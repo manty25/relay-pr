@@ -34,12 +34,12 @@ export const SCHEMA = obj({
 const SYSTEM = `You are a senior media-relations writer at a top PR agency. You write campaign assets that journalists actually use.
 
 Hard rules (each maps to the house standards):
-- Facts: use ONLY facts in the brief and fact sheet. Never invent numbers, names, customers, prices, dates or claims. Where a strong release would need a missing fact, write a visible placeholder like [TK: price and availability]. (DS-4)
+- Facts: use ONLY facts in the brief, the fact sheet and the organisation's own website excerpt (if given; use it for background and the boilerplate, never for claims about this news it does not state). Never invent numbers, names, customers, prices, dates or claims. Where a strong release would need a missing fact, write a visible placeholder like [TK: price and availability]. (DS-4)
 - Press release: AP style, inverted pyramid. Headline ≤ 100 characters with an active verb, no exclamation marks. Lede ≤ 45 words answering who and what. Do NOT include the dateline; it is added automatically. Body 250–600 words across 4–7 paragraphs when the facts allow; shorter is better than padded. Put 3+ discrete facts in one paragraph that starts with "Key facts:" followed by lines beginning with "• ". (PR-1..PR-4, AE-3)
 - No hype: never use revolutionary, game-changing, cutting-edge, world-class, best-in-class, synergy, disruptive, seamless, unparalleled, leverage, next-generation, innovative, groundbreaking, robust, state-of-the-art. Superlatives (first, only, largest, #1) only if the brief marks claims as substantiated. (PR-9, PR-11)
 - Do not put the spokesperson quote inside paragraphs; it is inserted automatically after the second paragraph.
 - Quote: if the brief has a quote, use it verbatim. Otherwise draft ONE quote for the spokesperson that gives opinion, motivation or vision — never a repeat of facts — in plain spoken English. It will be approved by the spokesperson. Return the quote text only (no attribution, no quotation marks).
-- Boilerplate: if the brief has an "about" text, return it verbatim; otherwise return "".
+- Boilerplate: if the brief has an "about" text, return it verbatim; otherwise, if a website excerpt is given, write 2-3 neutral sentences from it; otherwise return "".
 - FAQ: 5 plain questions a person would ask an AI assistant about this news, with short factual answers from the brief. (AE-5)
 - Social: native copy per platform, all different. Include the literal token {link} exactly once in each. X ≤ 230 chars before the link, Bluesky ≤ 250, Threads ≤ 450, Mastodon ≤ 450, LinkedIn: hook line ≤ 200 chars then short paragraphs. Hashtags: ≤ 2 on X/Bluesky/Threads, ≤ 3 on LinkedIn/Mastodon. (SO-1..SO-4)
 - Newsletter: subject ≤ 55 chars; body ≤ 150 words with {link} once.
@@ -70,7 +70,7 @@ async function call(messages) {
   return { data: JSON.parse(text), usage: msg.usage, model: msg.model };
 }
 
-function promptFor({ brief, analysis, factSheet, targets, launchAt }) {
+function promptFor({ brief, analysis, factSheet, targets, launchAt, site }) {
   const topic = TOPIC_BY_ID[analysis.topic.id];
   const tgt = targets.slice(0, 40).map((t) => ({ targetId: t.id, outlet: t.outlet, beats: t.matchedBeats, recentArticle: t.recentArticle?.title || null }));
   return `Write the campaign assets for this announcement.
@@ -87,6 +87,7 @@ ${JSON.stringify({
 <fact_sheet>
 ${factSheet.facts.map((f) => `- ${f.text}`).join('\n')}
 </fact_sheet>
+${site?.pages?.length ? `\n<website url="${site.url}">\n${site.description || ''}\n${site.pages.map((p) => `[${p.url}]\n${p.text.slice(0, 2500)}`).join('\n\n')}\n</website>\n` : ''}
 
 <playbook topic="${topic.label}">
 Angles that work: ${topic.angles.join('; ')}
@@ -154,6 +155,7 @@ ${headlines.slice(0, 12).map((x) => `- ${x}`).join('\n') || 'none'}
 const bool = { type: 'boolean' };
 const COVERAGE_SCHEMA = obj({ sector: str, beat: str, techProduct: bool, phrases: arr(str), outlets: arr(obj({ name: str, domain: str })) });
 const COVERAGE_SYSTEM = `You help a PR tool find journalists who cover a press release's subject, in any industry.
+If the user stated the sector, use it.
 Return:
 - sector: the industry or subject area in 1-3 plain words (e.g. "legal services", "defense", "consumer goods").
 - beat: the same as a short lowercase slug with hyphens (e.g. "legal", "defense", "consumer-goods").
@@ -161,7 +163,7 @@ Return:
 - phrases: 2-4 short search phrases (1-3 words each) that news articles on this beat use, most specific first. No company names, and no generic words like "services" or "business" on their own.
 - outlets: up to 8 real trade or specialist publications that cover this beat in the release's region, with their main website domain (e.g. {"name":"Defense News","domain":"defensenews.com"}). Only publications you are confident exist; leave it empty if unsure. No general national newspapers.`;
 
-export async function inferCoverage({ news, facts = [], audience = '', region = '' }) {
+export async function inferCoverage({ news, facts = [], audience = '', region = '', sector = '' }) {
   const stream = client().beta.messages.stream({
     model: MODEL,
     max_tokens: 2500,
@@ -170,7 +172,7 @@ export async function inferCoverage({ news, facts = [], audience = '', region = 
     thinking: { type: 'adaptive' },
     output_config: { effort: 'low', format: { type: 'json_schema', schema: COVERAGE_SCHEMA } },
     system: COVERAGE_SYSTEM,
-    messages: [{ role: 'user', content: `<release region="${region || 'us'}">\n<headline>${news}</headline>\n<facts>\n${facts.slice(0, 6).map((f) => `- ${f}`).join('\n')}\n</facts>\n<audience>${audience}</audience>\n</release>` }],
+    messages: [{ role: 'user', content: `<release region="${region || 'us'}">\n<headline>${news}</headline>\n<facts>\n${facts.slice(0, 6).map((f) => `- ${f}`).join('\n')}\n</facts>\n<audience>${audience}</audience>${sector ? `\n<sector_stated_by_user>${sector}</sector_stated_by_user>` : ''}\n</release>` }],
   });
   const msg = await stream.finalMessage();
   if (msg.stop_reason === 'refusal' || msg.stop_reason === 'max_tokens') throw new Error(`Claude did not finish (${msg.stop_reason})`);
@@ -183,4 +185,39 @@ export function cleanCoverage(d) {
   const outlets = (d.outlets || []).map((o) => ({ name: String(o.name || '').slice(0, 60), domain: String(o.domain || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') }))
     .filter((o) => o.name && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(o.domain)).slice(0, 8);
   return { sector: String(d.sector || '').slice(0, 40), beat, techProduct: Boolean(d.techProduct), phrases, outlets };
+}
+
+// ---------------------------------------------------------------- the organisation's website
+
+const SITE_SCHEMA = obj({ about: str, audience: str, sector: str, facts: arr(obj({ text: str, sourceUrl: str })) });
+const SITE_SYSTEM = `You help a PR person prepare a press release. You are given excerpts from their organisation's own website and the one-line news.
+Use ONLY what the website excerpts state. Never invent or infer numbers, customers, awards, dates or claims.
+Return:
+- about: a 2-3 sentence boilerplate ("About <org>") in neutral third person, built only from what the site says. No hype words (innovative, leading, world-class, cutting-edge, seamless). "" if the site says too little.
+- audience: who the organisation serves, at most 12 words, or "".
+- sector: the industry in 1-3 plain words, or "".
+- facts: up to 6 short, concrete, verifiable facts from the site that would strengthen a release about this news (founding year, locations, size, customers it names, product specifics, prices it lists). Each with the sourceUrl of the page it came from. Skip vague marketing statements.`;
+
+export async function extractFromWebsite({ brief, site, text }) {
+  const stream = client().beta.messages.stream({
+    model: MODEL,
+    max_tokens: 4000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    thinking: { type: 'adaptive' },
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: SITE_SCHEMA } },
+    system: SITE_SYSTEM,
+    messages: [{ role: 'user', content: `<news org="${brief.org || ''}">${brief.news || ''}</news>
+<website url="${site.url}" name="${site.siteName || ''}">
+<description>${site.description || ''}</description>
+${site.pages.map((p) => `<page url="${p.url}" title="${p.title.replace(/"/g, "'")}">\n${p.text}\n</page>`).join('\n')}
+</website>` }],
+  });
+  const msg = await stream.finalMessage();
+  if (msg.stop_reason === 'refusal' || msg.stop_reason === 'max_tokens') throw new Error(`Claude did not finish (${msg.stop_reason})`);
+  const d = JSON.parse(msg.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  // Keep only facts whose numbers really appear on the site (DS-4).
+  const nums = (s) => String(s).match(/\d[\d,.]*/g) || [];
+  const facts = (d.facts || []).filter((f) => f.text && nums(f.text).every((n) => text.includes(n.replace(/[.,]$/, '')))).slice(0, 6);
+  return { about: d.about || '', audience: d.audience || '', sector: d.sector || '', facts };
 }
