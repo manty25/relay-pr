@@ -224,6 +224,35 @@ export function articleAuthors(html, pageUrl, outletName = '') {
   return found.slice(0, 3);
 }
 
+// What the site says about itself (homepage meta tags).
+export function siteMeta(html) {
+  const title = stripTags((String(html || '').match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
+  return {
+    siteName: meta(html, 'og:site_name') || meta(html, 'application-name') || title.split(/\s[|–—-]\s/)[0] || '',
+    description: (meta(html, 'og:description') || meta(html, 'description') || meta(html, 'twitter:description')).slice(0, 400),
+  };
+}
+
+const NOT_ARTICLE_PATH = /\/(author|authors|by|tag|tags|topic|topics|category|categories|section|sections|page|search|about|contact|privacy|terms|subscribe|newsletter|login|account|staff|people|profile|video|podcasts?|events|jobs|advertis|feed|rss)(\/|$)/i;
+// Article links on a page (e.g. an author page's list of recent stories).
+export function articleLinks(html, base, domain, limit = 10) {
+  const out = [];
+  const seen = new Set();
+  for (const l of links(html, base)) {
+    let u;
+    try { u = new URL(l.href); } catch { continue; }
+    if (!sameSite(u.hostname, domain) || NOT_ARTICLE_PATH.test(u.pathname) || seen.has(u.pathname)) continue;
+    const words = l.text.split(/\s+/).filter(Boolean).length;
+    const sluggy = /\/20\d\d\//.test(u.pathname) || (u.pathname.split('/').pop() || '').split('-').length >= 4;
+    if (words < 4 || words > 30 || !sluggy) continue;
+    seen.add(u.pathname);
+    const d = u.pathname.match(/\/(20\d\d)\/(\d{1,2})\/(\d{1,2})\//);
+    out.push({ title: l.text, url: u.origin + u.pathname, date: d ? `${d[1]}-${d[2].padStart(2, '0')}-${d[3].padStart(2, '0')}` : '' });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 const SOCIAL = { x: /(?:twitter|x)\.com\/(?!intent|share|home)([A-Za-z0-9_]{2,15})\b/, bluesky: /bsky\.app\/profile\/([a-z0-9.-]+)/i, linkedin: /linkedin\.com\/in\/([A-Za-z0-9-]+)/, mastodon: /(https:\/\/[a-z0-9.-]+\/@[A-Za-z0-9_]+)/ };
 function socialLinks(html) {
   const out = {};
@@ -246,13 +275,16 @@ async function researchOutlet(o, ctx, fetcher) {
   const { terms, place, plan, articles: indexArticles, log } = ctx;
   const origin = `https://${o.domain}`;
   const home = await fetcher.get(origin + '/');
+  let headlines = [];
   // Candidate articles on the topic: news-index results with real URLs, then the outlet's own feed.
   const cands = indexArticles.filter((a) => a.url && !/news\.google\.com/.test(a.url) && sameSite(domainOf(a.url), o.domain)).map((a) => ({ title: a.title, url: a.url, date: a.date }));
   if (cands.length < 3) {
     for (const f of feedUrls(home, origin + '/')) {
       const xml = await fetcher.get(f);
       if (!xml || !/<(rss|feed|rdf)/i.test(xml)) continue;
-      cands.push(...parseFeed(xml, f).filter((i) => matchesTopic(i, terms, place)));
+      const items = parseFeed(xml, f);
+      headlines = items.slice(0, 10).map((i) => i.title).filter(Boolean);
+      cands.push(...items.filter((i) => matchesTopic(i, terms, place)));
       break;
     }
   }
@@ -278,6 +310,7 @@ async function researchOutlet(o, ctx, fetcher) {
     const html = await fetcher.get(p.profileUrl);
     if (!html) continue;
     Object.assign(p.social, socialLinks(html));
+    p.recent = articleLinks(html, p.profileUrl, o.domain, 10);
     const mails = emailsIn(html).filter((e) => !DESK.test(e) && !NEVER.test(e));
     const mine = mails.filter((e) => emailMatchesName(e, p.name));
     const pick = mine[0] || (mails.length === 1 && sameSite(e2d(mails[0]), o.domain) ? mails[0] : '');
@@ -300,7 +333,7 @@ async function researchOutlet(o, ctx, fetcher) {
   }
   const found = [...people.values()];
   log.push(`${o.name}: ${articles.length} article(s), ${found.length} reporter(s), ${found.filter((p) => p.emails.length).length} with a published address, ${deskEmails.length} desk address(es)`);
-  return { journalists: found, outlet: { domain: o.domain, name: o.name, emails: deskEmails, contactPages } };
+  return { journalists: found, outlet: { domain: o.domain, name: o.name, emails: deskEmails, contactPages, ...(home ? siteMeta(home) : {}), headlines } };
 }
 const e2d = (e) => e.split('@')[1] || '';
 const score = (u) => (/tips?|contact/i.test(u) ? 3 : /masthead|staff|team|people/i.test(u) ? 2 : 1);

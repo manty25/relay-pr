@@ -11,6 +11,7 @@ import { researchJournalists } from './research.js';
 import { apolloEnabled, apolloFill } from './apollo.js';
 import { currentPlan } from '../plans.js';
 import { personById, asContact, fitFor, personKeyOf } from './people.js';
+import { outletFacts, enrichCampaignProfiles } from './profiles.js';
 import { writeOffline, quoteParagraph } from '../generate/offline.js';
 import { llmAvailable, writeWithClaude, repairWithClaude, MODEL } from '../generate/claude.js';
 import { pitchFor, followUpFor, releaseText, wirePackage, newsroomHtml, defaultOpener } from '../generate/compose.js';
@@ -132,6 +133,7 @@ function applySelection(c) {
   }
   let n = 0;
   for (const t of targets) { if (/^exclusive_backup/.test(t.role)) t.role = `exclusive_backup_${++n}`; t.exclusive = t.role === 'exclusive'; }
+  for (const t of targets) t.outletLine = outletFacts(t.domain);
   c.targets = targets;
   c.targeting.count = targets.length;
 }
@@ -202,6 +204,11 @@ export async function runResearch(cid, { fetchImpl, delayMs } = {}) {
     saveCampaign(fresh);
     audit({ campaignId: cid, action: 'research', ...res.stats });
     researchJobs.delete(cid);
+    // Outlet profiles (incl. Claude summaries) and recent articles fill in afterwards, in the background.
+    if (!fetchImpl || process.env.RELAY_ENRICH_SYNC === '1') {
+      const run = enrichCampaignProfiles(fresh, { fetchImpl, delayMs, personById }).catch(() => null);
+      if (process.env.RELAY_ENRICH_SYNC === '1') await run;
+    }
     return fresh.research;
   } catch (e) {
     const fresh = loadCampaign(cid);

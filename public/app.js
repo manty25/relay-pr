@@ -52,6 +52,7 @@ const fmt = {
   day: (iso, tz) => new Intl.DateTimeFormat(undefined, { timeZone: tz, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date(iso)),
   time: (iso, tz) => new Intl.DateTimeFormat(undefined, { timeZone: tz, hour: 'numeric', minute: '2-digit' }).format(new Date(iso)),
   dt: (iso, tz) => new Intl.DateTimeFormat(undefined, { timeZone: tz, weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(new Date(iso)),
+  rel: (d) => { if (!d) return ''; const days = Math.round((Date.now() - new Date(d)) / 86400000); return days <= 0 ? 'today' : days === 1 ? 'yesterday' : days < 31 ? `${days} days ago` : days < 365 ? `${Math.round(days / 30)} mo ago` : `${Math.round(days / 365)} yr ago`; },
   ago: (iso) => { const d = (Date.now() - new Date(iso)) / 60000; return d < 60 ? `${Math.max(1, Math.round(d))} min ago` : d < 1440 ? `${Math.round(d / 60)} h ago` : `${Math.round(d / 1440)} d ago`; },
 };
 const badge = (text, kind = '') => h('span', { class: `badge ${kind}` }, text);
@@ -435,6 +436,61 @@ function researchPanel(c, r) {
 const SOURCE_LABEL = { import: 'Your list', directory: 'Researched', 'directory-desk': 'Outlet desk', demo: 'Test desk' };
 const srcKey = (t) => (t.demo ? 'demo' : t.source || 'import');
 
+// ---- journalist card: who they are, the outlet, their latest work, and fit for this campaign ----
+let cardLayer = null;
+const closeCard = () => { if (cardLayer) { cardLayer.remove(); cardLayer = null; } };
+const shortLine = (l) => (l || '').split(' · ').slice(0, 3).join(' · ');
+const VIA = { 'author-page': 'From their author page', research: 'Found by Relay research', 'name-search': 'Found by a news search for their name — check the byline', 'news-search': 'Recent coverage at this outlet' };
+
+async function openCard(id, campaignId, { refresh = false } = {}) {
+  closeCard();
+  const body = h('div', { class: 'cardbody' }, h('p', { class: 'muted', style: 'padding:28px' }, h('span', { class: 'spinner' }), ' Gathering their recent work and the outlet profile…'));
+  const panel = h('aside', { class: 'drawer', role: 'dialog', 'aria-label': 'Journalist details' }, h('button', { class: 'drawer-x', type: 'button', 'aria-label': 'Close', onclick: closeCard }, '×'), body);
+  cardLayer = h('div', { class: 'drawer-scrim', onmousedown: (e) => { if (e.target === cardLayer) closeCard(); } }, panel);
+  document.body.append(cardLayer);
+  panel.focus?.();
+  let d;
+  try { d = await api(`people/${encodeURIComponent(id)}/card?${new URLSearchParams({ ...(campaignId ? { campaign: campaignId } : {}), ...(refresh ? { refresh: '1' } : {}) })}`); }
+  catch (e) { body.replaceChildren(h('p', { style: 'padding:28px' }, e.message)); return; }
+  const { person: p, outlet: o, articles, campaign: cp } = d;
+  const srcBadges = p.sources.map((x) => { const [l, k] = SRC[x] || [x, '']; return badge(l, k); });
+  const reload = () => openCard(id, campaignId);
+  const act = async (sel, msg) => { await api(`campaigns/${cp.id}`, { method: 'PATCH', body: { selection: sel } }); toast(msg); reload(); if (state.campaign?.id === cp.id) route(); };
+  const campaignBox = cp ? h('div', { class: 'cardcamp' },
+    h('div', {}, h('div', { class: 'eyebrow' }, 'This campaign'),
+      cp.inCampaign ? h('div', {}, h('strong', {}, `Selected · ${ROLE_LABEL[/^exclusive_backup/.test(cp.role) ? 'backup' : cp.role] || cp.role}`), cp.score != null ? h('span', { class: 'muted' }, ` · fit ${cp.score}`) : null, cp.reason ? h('div', { class: 'small muted' }, cp.reason) : null)
+        : h('div', {}, h('strong', {}, cp.removed ? 'Removed from this campaign' : 'Not in this campaign'))),
+    cp.locked ? h('span', { class: 'small muted' }, 'Locked after launch')
+      : cp.inCampaign ? h('button', { class: 'btn ghost sm', type: 'button', onclick: () => act({ remove: [id] }, `Removed ${p.name}`) }, 'Remove')
+        : cp.removed ? h('button', { class: 'btn acc sm', type: 'button', onclick: () => act({ restore: [id] }, `Restored ${p.name}`) }, 'Restore')
+          : p.kind !== 'desk' && p.email ? h('button', { class: 'btn acc sm', type: 'button', onclick: () => act({ add: [id] }, `Added ${p.name}`) }, 'Add to campaign') : null) : null;
+  const outletUrl = `https://${o.domain}`;
+  body.replaceChildren(...[
+    h('header', { class: 'cardhead' },
+      h('div', { class: 'src' }, ...srcBadges, ...p.tags.map((t) => badge(t))),
+      h('h2', {}, p.name),
+      h('div', { class: 'muted' }, [p.title, p.outlet].filter(Boolean).join(' · '))),
+    campaignBox,
+    h('section', { class: 'cardsec' }, h('h4', {}, 'The outlet', h('a', { href: outletUrl, target: '_blank', rel: 'noopener' }, `${o.domain} ↗`)),
+      h('div', { class: 'serif', style: 'font-size:22px;margin-top:10px' }, o.name),
+      o.line ? h('div', { class: 'small muted', style: 'margin-top:2px' }, o.line) : null,
+      o.summary ? h('p', { style: 'margin:12px 0 6px' }, o.summary) : o.description ? h('p', { style: 'margin:12px 0 6px' }, `“${o.description}”`, h('span', { class: 'small muted' }, ' — the site’s own description')) : h('p', { class: 'small muted', style: 'margin-top:12px' }, 'No description available yet.'),
+      o.audience ? h('div', { class: 'small' }, h('strong', {}, 'Readers: '), o.audience) : null,
+      o.pitchTip ? h('div', { class: 'tip' }, h('strong', {}, 'What fits: '), o.pitchTip) : null,
+      o.summary ? h('div', { class: 'small muted', style: 'margin-top:6px' }, `Summary written by Claude from the site’s description and recent headlines${o.summaryAt ? `, ${o.summaryAt.slice(0, 10)}` : ''}.`) : null),
+    h('section', { class: 'cardsec' }, h('h4', {}, p.kind === 'desk' ? 'Recent coverage at this outlet' : 'Recent articles', p.kind !== 'desk' ? h('button', { class: 'link', type: 'button', onclick: () => openCard(id, campaignId, { refresh: true }) }, 'Refresh') : null),
+      articles.length ? h('ol', { class: 'arts' }, ...articles.map((a) => h('li', {},
+        h('span', { class: 'when' }, a.date ? fmt.rel(a.date) : ''),
+        h('span', {}, a.url ? h('a', { href: a.url, target: '_blank', rel: 'noopener' }, a.title, ' ↗') : a.title, a.topical ? [' ', badge('On topic', 'ok')] : null))))
+        : h('p', { class: 'small muted', style: 'margin-top:10px' }, 'No recent articles found yet.'),
+      p.recentVia ? h('div', { class: 'small muted', style: 'margin-top:8px' }, VIA[p.recentVia] || '') : null),
+    h('section', { class: 'cardsec' }, h('h4', {}, 'Contact'),
+      h('div', { style: 'margin-top:10px' }, p.email || h('span', { class: 'muted' }, 'No address yet')),
+      h('div', { class: 'small muted' }, p.sources.includes('list') ? 'From your uploaded list' : p.provider === 'apollo' ? 'Via Apollo.io (verified)' : p.emailSource ? h('span', {}, 'Published by the outlet: ', h('a', { href: p.emailSource, target: '_blank', rel: 'noopener' }, 'source ↗')) : p.kind === 'desk' ? 'Outlet desk / test address' : '', p.verifiedAt ? ` · verified ${p.verifiedAt.slice(0, 10)}` : ''),
+      Object.keys(p.social || {}).length ? h('div', { class: 'src', style: 'margin-top:8px' }, ...Object.entries(p.social).map(([k, v]) => badge(`${k}: ${v}`))) : null,
+      p.profileUrl ? h('div', { class: 'small', style: 'margin-top:6px' }, h('a', { href: p.profileUrl, target: '_blank', rel: 'noopener' }, 'Author page ↗')) : null)].filter(Boolean));
+}
+
 // ---- campaign media list: a pick list over Relay's recommendations + your whole database ----
 const SRC = {
   import: ['Your list', 'acc'], list: ['Your list', 'acc'], directory: ['Researched', 'ok'], research: ['Researched', 'ok'],
@@ -468,7 +524,9 @@ async function media(c) {
         ...allowed.map((r) => h('option', { value: r, selected: roleOf(t) === r }, ROLE_LABEL[r])));
       return h('tr', {},
         h('td', { class: 'pick' }, h('input', { type: 'checkbox', checked: true, disabled: locked, 'aria-label': `Keep ${t.name} in this campaign`, onchange: () => selectionPatch(c, { remove: [k] }, `Removed ${t.name}`) })),
-        h('td', {}, h('span', { class: 'o' }, t.demo ? t.outlet : t.name), h('div', { class: 'small muted' }, t.demo ? 'News desk' : t.outlet)),
+        h('td', {}, h('button', { class: 'namebtn o', type: 'button', onclick: () => openCard(k, c.id) }, t.demo ? t.outlet : t.name),
+          h('div', { class: 'small muted' }, t.demo ? 'News desk' : t.outlet, t.outletLine ? h('span', {}, ` · ${shortLine(t.outletLine).split(' · ').slice(0, 2).join(' · ')}`) : null),
+          t.recentArticle && !t.demo ? h('div', { class: 'small lastwrote' }, `Wrote${t.recentArticle.date ? ` ${fmt.rel(t.recentArticle.date)}` : ''}: “${t.recentArticle.title.slice(0, 70)}”`) : null),
         h('td', {}, h('div', { class: 'small' }, t.email), h('div', { class: 'src' }, badge(sl, sk), t.manual ? badge('Added by you') : null,
           t.emailProvider === 'apollo' ? null : t.emailSource ? h('a', { href: t.emailSource, target: '_blank', rel: 'noopener' }, 'source ↗') : null)),
         h('td', {}, roleSel),
@@ -527,7 +585,8 @@ async function openAddJournalists(c) {
       const box = h('input', { type: 'checkbox', checked: x.inCampaign || st.picked.has(x.id), disabled: x.inCampaign, onchange: (e) => { e.target.checked ? st.picked.add(x.id) : st.picked.delete(x.id); upd(); } });
       const s = x.sources.includes('list') ? SRC.list : x.sources.includes('apollo') ? SRC.apollo : SRC.research;
       return h('li', {}, h('label', { class: 'pickrow' }, box,
-        h('span', {}, h('span', { class: 'o' }, x.name), h('span', { class: 'small muted' }, ` · ${x.outlet}`),
+        h('span', {}, h('span', { class: 'o' }, x.name), h('span', { class: 'small muted' }, ` · ${x.outlet}`), ' ', h('button', { class: 'link', type: 'button', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openCard(x.id, c.id); } }, 'Details'),
+          x.outletLine ? h('div', { class: 'small muted' }, shortLine(x.outletLine)) : null,
           h('div', { class: 'src' }, badge(s[0], s[1]), ...x.tags.map((t) => badge(t)), x.latestArticle ? h('span', { class: 'small muted' }, ` “${x.latestArticle.title.slice(0, 60)}”`) : null)),
         h('span', { class: 'small muted' }, x.inCampaign ? 'In campaign' : x.fit >= 6 ? 'Strong fit' : x.fit >= 3 ? 'Good fit' : x.fit > 0 ? 'Possible' : 'Off topic')));
     }) : [h('li', { class: 'muted small', style: 'padding:16px' }, 'No journalists with an address match. Import your list or run research from the Media list.')]));
@@ -607,13 +666,13 @@ async function viewJournalists() {
         const s = p.sources.includes('list') ? SRC.list : p.sources.includes('apollo') ? SRC.apollo : SRC.research;
         return h('tr', {},
           h('td', { class: 'pick' }, h('input', { type: 'checkbox', class: 'prow', value: p.id, 'aria-label': `Select ${p.name}`, onchange: (e) => { e.target.checked ? sel.add(p.id) : sel.delete(p.id); refreshBulk(); } })),
-          h('td', {}, h('span', { class: 'o' }, p.name), h('div', { class: 'small muted' }, p.outlet)),
+          h('td', {}, h('button', { class: 'namebtn o', type: 'button', onclick: () => openCard(p.id) }, p.name), h('div', { class: 'small muted' }, p.outlet), p.outletLine ? h('div', { class: 'small muted' }, shortLine(p.outletLine)) : null),
           h('td', {}, p.email ? h('div', { class: 'small' }, p.email) : h('span', { class: 'small muted' }, 'No address yet'),
             h('div', { class: 'src' }, badge(s[0], s[1]), p.sources.length > 1 ? badge('+ researched', 'ok') : null, p.stale ? badge('re-check', 'warn') : null,
               p.emailSource && p.provider !== 'apollo' ? h('a', { href: p.emailSource, target: '_blank', rel: 'noopener' }, 'source ↗') : null)),
           h('td', { class: 'small muted' }, [...p.topics.map((t) => topicLabel[t] || t), ...p.beats.slice(0, 3)].join(', ') || '—'),
           h('td', {}, h('div', { class: 'tags' }, ...p.tags.map((t) => h('button', { class: 'badge tagchip', type: 'button', title: `Show everyone tagged ${t}`, onclick: () => setParam('tag', t) }, t)))),
-          h('td', { class: 'small' }, p.latestArticle ? (p.latestArticle.url ? h('a', { href: p.latestArticle.url, target: '_blank', rel: 'noopener' }, p.latestArticle.title.slice(0, 64)) : p.latestArticle.title.slice(0, 64)) : '—'),
+          h('td', { class: 'small' }, p.latestArticle ? [p.latestArticle.url ? h('a', { href: p.latestArticle.url, target: '_blank', rel: 'noopener' }, p.latestArticle.title.slice(0, 64)) : p.latestArticle.title.slice(0, 64), p.latestArticle.date ? h('div', { class: 'muted' }, fmt.rel(p.latestArticle.date)) : null] : '—'),
           h('td', {}, h('button', { class: 'link', type: 'button', onclick: () => removeOne(p) }, p.kind === 'contact' ? 'Remove' : 'Forget')));
       }))))
       : h('div', { class: 'empty' }, h('h2', {}, data.stats.total || show === 'dnc' ? 'Nobody matches' : 'No journalists yet'), h('p', {}, data.stats.total || show === 'dnc' ? 'Try another search or filter.' : 'Import your contact list above, or build a campaign — Relay researches the reporters who cover your topic and adds them here.')),
@@ -803,6 +862,7 @@ function openShortcuts() {
 document.addEventListener('keydown', (e) => {
   const mod = e.metaKey || e.ctrlKey;
   const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || e.target.isContentEditable;
+  if (e.key === 'Escape' && cardLayer) { e.preventDefault(); closeCard(); return; }
   if (e.key === 'Escape' && overlay) { e.preventDefault(); closeOverlay(); return; }
   if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); overlay ? closeOverlay() : openPalette(); return; }
   if (overlay) return;
@@ -829,6 +889,7 @@ $('#palette-btn').addEventListener('click', openPalette);
 
 async function route() {
   closeOverlay();
+  if (!location.hash.includes('/media') && !location.hash.includes('journalists')) closeCard();
   const [, kind, id, tab] = location.hash.replace(/^#/, '').split('/');
   if (kind === 'c' && id) return viewCampaign(id, tab);
   if (kind === 'campaigns') return viewCampaigns();

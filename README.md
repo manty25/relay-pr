@@ -119,6 +119,25 @@ CSV from the same page (a `tags` column is supported). "Remove" deletes someone 
 a researched person and blocks their address from being collected again. Over time this becomes your own
 media database organised by topic, and new campaigns on familiar topics start with a ready list.
 
+### Journalist cards: who to pitch
+
+Click any journalist's name, in a campaign's Media list, on the Journalists page or via "Details" in Add
+journalists, to open their card:
+
+- **The outlet:** a one-line profile (type, region, tier, audience band, beats). With `ANTHROPIC_API_KEY` set,
+  Claude adds a short summary of what the outlet covers, who reads it and what kind of story fits. It's written
+  from the site's own description and recent headlines, cached for 90 days, and costs well under a cent per
+  outlet.
+- **Recent articles:** their latest pieces, linked and dated, with ones on this campaign's topic marked.
+  - Researched reporters: taken from their author page.
+  - Your uploaded contacts: Relay looks for their author page on the outlet. If none is found, it uses a news
+    search for their name at that outlet, labelled so you can check the byline.
+  - Lists refresh weekly, or on demand with **Refresh**.
+- **Why they fit this campaign**, where their address came from, and Add / Remove / Restore for this campaign.
+
+Tables also show each person's outlet type and their latest piece ("Wrote 3 days ago: …"). After research,
+outlet summaries and recent articles for the media list are filled in automatically in the background.
+
 ### Choosing journalists for a campaign
 
 A campaign's **Media list** starts with Relay's recommendations, from both your list and research, one per
@@ -204,7 +223,7 @@ service choice and a checklist; you submit it to the wire service you choose.
 ## Tests
 
 ```bash
-npm test             # 70 tests, named after the standards they enforce
+npm test             # 76 tests, named after the standards they enforce
 ```
 
 The tests run offline and include a mock Messages API that checks the Claude writing path end to end.

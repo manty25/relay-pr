@@ -22,6 +22,7 @@ import { currentPlan, PLANS, upgradeUrl } from './src/plans.js';
 import { apolloEnabled, apolloCap } from './src/engine/apollo.js';
 import { listPeople, allTags, peopleStats, tagPeople, removePerson, personById, personKeyOf, fitFor } from './src/engine/people.js';
 import { rolesAllowed } from './src/engine/campaign.js';
+import { ensureOutletProfile, ensureRecentArticles, articlesFor, outletProfile } from './src/engine/profiles.js';
 import { csvEscape } from './src/util.js';
 import { CHANNELS } from './src/knowledge/channels.js';
 
@@ -68,6 +69,36 @@ function authorized(req) {
   const given = Buffer.from(Buffer.from(h.slice(6), 'base64').toString().split(':').slice(1).join(':'));
   const want = Buffer.from(pw);
   return given.length === want.length && timingSafeEqual(given, want);
+}
+
+// Everything needed to decide whether to pitch someone: who they are, the outlet, their latest work, and
+// (with a campaign) why Relay thinks they fit. Fetches missing articles/outlet profile with a time limit.
+const withinMs = (p, ms) => Promise.race([p, new Promise((r) => setTimeout(() => r(null), ms))]);
+async function journalistCard(id, url) {
+  const cid = url.searchParams.get('campaign');
+  const camp = cid ? loadCampaign(cid) : null;
+  const refresh = url.searchParams.get('refresh') === '1';
+  const terms = camp?.discovery?.query?.terms || [];
+  const target = camp?.targets.find((t) => personKeyOf(t) === id) || null;
+  const removed = camp?.removedTargets?.some((r) => r.key === id) || false;
+  let p = id.startsWith('t:') ? null : personById(id);
+  if (!p && !target) throw new HttpError(404, 'Journalist not found');
+  const domain = p?.domain || target.domain;
+  const outletName = p?.outlet || target.outlet;
+  const [outlet] = await Promise.all([
+    withinMs(ensureOutletProfile(domain, outletName), 15000),
+    p ? withinMs(ensureRecentArticles(p, { force: refresh }), 15000) : null,
+  ]);
+  if (p) p = personById(id); // re-read with fresh articles
+  const raw = p?.raw || {};
+  const deskArticles = !p ? (camp?.discovery?.sample || []).filter((a) => (a.domain || '').endsWith(domain)).map((a) => ({ title: a.title, url: a.url, date: a.date, topical: true })) : [];
+  return {
+    person: p ? { id: p.id, kind: p.kind, name: p.name, outlet: p.outlet, domain: p.domain, email: p.email, emailSource: p.emailSource, provider: p.provider, verifiedAt: p.verifiedAt, sources: p.sources, tags: p.tags, beats: p.beats, title: raw.title || '', profileUrl: raw.profileUrl || '', social: raw.social || {}, recentVia: raw.recentVia || (raw.articles?.length ? 'research' : ''), recentAt: raw.recentAt || '' }
+      : { id, kind: 'desk', name: target.name, outlet: target.outlet, domain, email: target.email, sources: [target.demo ? 'demo' : target.source], tags: [], beats: target.beats || [], recentVia: deskArticles.length ? 'news-search' : '' },
+    outlet: outlet || outletProfile(domain, outletName),
+    articles: p ? articlesFor(raw, terms) : deskArticles,
+    campaign: camp ? { id: camp.id, name: camp.name, locked: Boolean(camp.jobs?.length), inCampaign: Boolean(target), removed, role: target?.role || '', reason: target?.reason || '', score: target?.score ?? null, matchedBeats: target?.matchedBeats || [] } : null,
+  };
 }
 
 const getCampaign = (cid) => { const c = loadCampaign(cid); if (!c) throw new HttpError(404, 'Campaign not found'); return c; };
@@ -123,6 +154,7 @@ async function api(req, res, parts, url) {
       return send(res, 200, { suppressed: n });
     }
     if (m === 'DELETE' && b) return send(res, removePerson(decodeURIComponent(b)) ? 200 : 404, { ok: true });
+    if (m === 'GET' && b && c2 === 'card') return send(res, 200, await journalistCard(decodeURIComponent(b), url));
   }
 
   if (a === 'directory') {

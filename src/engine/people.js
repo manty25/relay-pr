@@ -6,6 +6,7 @@
 import { loadContacts, saveContacts, loadSuppression, isSuppressed } from './contacts.js';
 import { loadJournalists, saveJournalists, usableEmail, isStale, forgetJournalist } from './directory.js';
 import { findOutlet } from './targeting.js';
+import { outletFacts } from './profiles.js';
 
 const cleanTags = (tags) => [...new Set((tags || []).map((t) => String(t).trim()).filter(Boolean).map((t) => t.slice(0, 40)))].slice(0, 20);
 
@@ -14,7 +15,7 @@ function fromContact(c, supp) {
     id: `c:${c.id}`, kind: 'contact', name: c.name, outlet: c.outlet || findOutlet(c.domain)?.name || c.domain, domain: c.domain,
     email: c.email, emailSource: '', provider: 'list', verifiedAt: '', stale: false,
     sources: ['list'], beats: c.beats || [], topics: [], tags: c.tags || [],
-    latestArticle: c.recentArticle || null, doNotContact: isSuppressed(c.email, supp), raw: c,
+    latestArticle: c.recentArticles?.[0] || c.recentArticle || null, outletLine: outletFacts(c.domain), doNotContact: isSuppressed(c.email, supp), raw: c,
   };
 }
 
@@ -25,7 +26,7 @@ function fromJournalist(j, supp) {
     id: `j:${j.id}`, kind: 'journalist', name: j.name, outlet: j.outlet, domain: j.domain,
     email: e?.address || '', emailSource: e?.source || '', provider: e?.provider || (e ? 'published' : ''), verifiedAt: e?.verifiedAt || '', stale: e ? isStale(e) : false,
     sources: [e?.provider === 'apollo' ? 'apollo' : 'research'], beats: Object.keys(j.beats || {}), topics: Object.keys(j.topics || {}), tags: j.tags || [],
-    latestArticle: j.articles?.[0] || null, doNotContact: Boolean(anyEmail && !e) || j.optedOut, raw: j,
+    latestArticle: j.recent?.[0] || j.articles?.[0] || null, outletLine: outletFacts(j.domain), doNotContact: Boolean(anyEmail && !e) || j.optedOut, raw: j,
   };
 }
 

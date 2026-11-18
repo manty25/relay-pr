@@ -39,7 +39,7 @@ test('RS-2: robots.txt rules are honoured (longest match wins)', () => {
 const today = new Date().toUTCString();
 const SITE = {
   'https://citycycle.news/robots.txt': 'User-agent: *\nDisallow: /members/\n',
-  'https://citycycle.news/': `<html><head><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head><body>
+  'https://citycycle.news/': `<html><head><meta name="description" content="News for people who ride in cities."><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head><body>
     <a href="/contact">Contact us</a> <a href="/send-a-tip">Send a tip</a> <a href="/members/staff-list">Staff (members only)</a> <a href="/about">About</a></body></html>`,
   'https://citycycle.news/feed.xml': `<?xml version="1.0"?><rss><channel>
     <item><title>Why commuters are switching to folding e-bikes</title><link>https://citycycle.news/2026/folding-ebikes</link><pubDate>${today}</pubDate><dc:creator>Riya Shah</dc:creator></item>
@@ -49,7 +49,7 @@ const SITE = {
   'https://citycycle.news/2026/folding-ebikes': `<html><head><script type="application/ld+json">{"@context":"https://schema.org","@type":"NewsArticle","headline":"Why commuters are switching to folding e-bikes","author":{"@type":"Person","name":"Riya Shah","url":"https://citycycle.news/author/riya-shah"}}</script></head>
     <body><p>By <a rel="author" href="/author/riya-shah">Riya Shah</a></p><aside>More from <a href="/author/someone-else">Someone Else</a></aside></body></html>`,
   'https://citycycle.news/2026/rail-fares': '<html><head><meta name="author" content="Tom Berg"></head><body>Fares.</body></html>',
-  'https://citycycle.news/author/riya-shah': '<html><body><h1>Riya Shah</h1><p>Transport reporter. <a href="mailto:riya.shah@citycycle.news">Email Riya</a> <a href="https://bsky.app/profile/riya.bsky.social">Bluesky</a></p></body></html>',
+  'https://citycycle.news/author/riya-shah': '<html><body><h1>Riya Shah</h1><p>Transport reporter. <a href="mailto:riya.shah@citycycle.news">Email Riya</a> <a href="https://bsky.app/profile/riya.bsky.social">Bluesky</a></p><a href="/2026/11/02/the-commuter-e-bike-price-war-heats-up">The commuter e-bike price war heats up</a><a href="/2026/10/20/city-council-votes-on-scooter-parking">City council votes on scooter parking rules</a></body></html>',
   'https://citycycle.news/contact': '<html><body>Newsroom: newsroom@citycycle.news · Advertising: ads@citycycle.news · Subscriptions: subscribe@citycycle.news</body></html>',
   'https://citycycle.news/send-a-tip': '<html><body>Send tips to tips@citycycle.news</body></html>',
   'https://citycycle.news/about': '<html><body>About us. Gmail: someone@gmail.com</body></html>',
@@ -91,6 +91,11 @@ test('research end to end: bylines, author pages, desks; robots respected; nothi
 
   const outlet = dir.loadOutlets().find((o) => o.domain === 'citycycle.news');
   assert.deepEqual(outlet.emails.map((e) => e.address).sort(), ['newsroom@citycycle.news', 'tips@citycycle.news'], 'desk addresses kept; ads/subscriptions/gmail dropped (RS-8)');
+  assert.equal(outlet.description, 'News for people who ride in cities.', 'outlet self-description kept for its profile');
+  assert.ok(outlet.headlines.includes('Why commuters are switching to folding e-bikes'), 'recent headlines kept');
+  const riyaRec = dir.loadJournalists().find((j) => j.name === 'Riya Shah');
+  assert.deepEqual(riyaRec.recent.map((a) => a.title), ['The commuter e-bike price war heats up', 'City council votes on scooter parking rules'], 'her recent work from her author page');
+  assert.equal(riyaRec.recent[0].date, '2026-11-02');
   process.env.RELAY_OFFLINE = '1';
   delete process.env.RELAY_PLAN;
 });

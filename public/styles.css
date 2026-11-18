@@ -105,6 +105,27 @@ select.mini { width: auto; padding: 4px 26px 4px 8px; font-size: 13px; }
 .addfoot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 22px; border-top: 1px solid var(--rule); }
 .scrim { padding-top: 8vh; }
 
+/* journalist card */
+.namebtn { background: none; border: 0; padding: 0; color: var(--ink); cursor: pointer; text-align: left; font-size: 18px; }
+.namebtn:hover { text-decoration: underline; text-underline-offset: 3px; }
+.lastwrote { color: var(--ink2); margin-top: 3px; }
+.drawer-scrim { position: fixed; inset: 0; z-index: 60; background: color-mix(in srgb, var(--ink) 22%, transparent); }
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: min(540px, 100%); background: var(--card); border-left: 1px solid var(--rule2); box-shadow: -30px 0 60px -30px rgba(0, 0, 0, .35); overflow-y: auto; }
+.drawer-x { position: absolute; top: 14px; right: 16px; width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--rule2); background: var(--card); color: var(--ink); font-size: 20px; cursor: pointer; }
+.cardhead { padding: 28px 28px 18px; border-bottom: 1px solid var(--rule); }
+.cardhead h2 { font-size: 38px; line-height: 1.05; margin: 10px 0 4px; }
+.cardcamp { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 28px; background: var(--sunk); border-bottom: 1px solid var(--rule); }
+.cardsec { padding: 20px 28px; border-bottom: 1px solid var(--rule); }
+.cardsec h4 { margin: 0; font: 500 11.5px var(--sans); letter-spacing: .12em; text-transform: uppercase; color: var(--mut); display: flex; justify-content: space-between; align-items: baseline; }
+.cardsec h4 a, .cardsec h4 button { letter-spacing: 0; text-transform: none; font-size: 12.5px; }
+.tip { margin-top: 8px; padding: 10px 12px; border-left: 2px solid var(--acc); background: var(--acc-soft); color: var(--ink); font-size: 14px; }
+.arts { list-style: none; margin: 10px 0 0; padding: 0; }
+.arts li { display: grid; grid-template-columns: 88px 1fr; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--rule); font-size: 14px; }
+.arts li:last-child { border-bottom: 0; }
+.arts .when { color: var(--mut); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.arts a { color: var(--ink); text-decoration-color: var(--rule2); }
+.arts a:hover { color: var(--acc-ink); }
+
 /* ---------- layout ---------- */
 main { min-height: calc(100vh - 64px); }
 .page { max-width: 1340px; margin: 0 auto; padding: 40px clamp(16px, 4vw, 48px) 80px; }
@@ -289,6 +310,8 @@ input[type=search]::-webkit-search-cancel-button { appearance: none; }
   .cols2, .fields, .tiers { grid-template-columns: minmax(0, 1fr); }
   .statrow { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .research { grid-template-columns: minmax(0, 1fr); }
+  .arts li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .cardhead, .cardsec, .cardcamp { padding-left: 18px; padding-right: 18px; }
   .plan li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
   .doc { padding: 20px; }
   .tabs a kbd { display: none; }

@@ -114,3 +114,36 @@ export async function repairWithClaude(ctx, previous, issues) {
   ];
   return call(messages);
 }
+
+// ---------------------------------------------------------------- outlet summaries (journalist cards)
+
+const OUTLET_SCHEMA = obj({ summary: str, audience: str, pitchTip: str });
+const OUTLET_SYSTEM = `You write short, neutral briefings about news outlets for PR people deciding whom to pitch.
+Use ONLY the facts provided (the outlet's own description, recent headlines, and catalogue facts). Do not invent audience sizes, rankings, owners or history.
+- summary: at most 2 sentences, at most 45 words: what the outlet covers and its angle, judged from the headlines.
+- audience: at most 12 words: who reads it (e.g. "city cyclists and urban-transport enthusiasts"). If unclear, say "General readers".
+- pitchTip: at most 22 words: what kind of story or angle fits this outlet, based on the headlines.
+Plain English, no hype words, no marketing tone.`;
+
+export async function summarizeOutlet({ name, domain, description = '', headlines = [], facts = '' }) {
+  const stream = client().beta.messages.stream({
+    model: MODEL,
+    max_tokens: 2000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    thinking: { type: 'adaptive' },
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: OUTLET_SCHEMA } },
+    system: OUTLET_SYSTEM,
+    messages: [{ role: 'user', content: `<outlet name="${name}" domain="${domain}">
+<catalogue_facts>${facts || 'none'}</catalogue_facts>
+<own_description>${description || 'none'}</own_description>
+<recent_headlines>
+${headlines.slice(0, 12).map((x) => `- ${x}`).join('\n') || 'none'}
+</recent_headlines>
+</outlet>` }],
+  });
+  const msg = await stream.finalMessage();
+  if (msg.stop_reason === 'refusal' || msg.stop_reason === 'max_tokens') throw new Error(`Claude did not finish (${msg.stop_reason})`);
+  const data = JSON.parse(msg.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  return { ...data, model: msg.model || MODEL, usage: { input_tokens: msg.usage.input_tokens, output_tokens: msg.usage.output_tokens } };
+}

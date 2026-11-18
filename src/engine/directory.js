@@ -12,7 +12,7 @@ export const STALE_DAYS = 365; // RS-6
 export const loadJournalists = () => readJson(J_FILE(), []);
 export const loadOutlets = () => readJson(O_FILE(), []);
 export const saveJournalists = (list) => writeJson(J_FILE(), list);
-const saveOutlets = (list) => writeJson(O_FILE(), list);
+export const saveOutlets = (list) => writeJson(O_FILE(), list);
 
 const bump = (obj, keys) => { for (const k of keys || []) if (k) obj[k] = (obj[k] || 0) + 1; return obj; };
 export const journalistId = (name, domain) => `${slug(name)}@${domain}`;
@@ -37,7 +37,8 @@ export function upsertJournalist(found, ctx = {}, list = null) {
     const ex = j.emails.find((x) => x.address.toLowerCase() === e.address.toLowerCase());
     if (ex) { ex.verifiedAt = now; ex.source = e.source || ex.source; ex.provider = e.provider || ex.provider || 'published'; } else j.emails.push({ address: e.address, source: e.source, provider: e.provider || 'published', foundAt: now, verifiedAt: now });
   }
-  for (const a of found.articles || []) if (!j.articles.some((x) => x.url === a.url)) j.articles.unshift(a);
+  for (const a of found.articles || []) if (!j.articles.some((x) => x.url === a.url)) j.articles.unshift({ ...a, topical: true });
+  if (found.recent?.length) { j.recent = found.recent.slice(0, 10); j.recentAt = now; j.recentVia = 'author-page'; }
   j.articles = j.articles.sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, MAX_ARTICLES);
   bump(j.beats, ctx.beats); bump(j.topics, [ctx.topicId]); bump(j.terms, ctx.terms);
   if (ctx.region && !j.regions.includes(ctx.region)) j.regions.push(ctx.region);
@@ -56,6 +57,9 @@ export function upsertOutlet(found, ctx = {}, list = null) {
   o.name ||= found.name;
   for (const e of found.emails || []) if (!o.emails.some((x) => x.address.toLowerCase() === e.address.toLowerCase())) o.emails.push({ address: e.address, kind: e.kind || 'desk', source: e.source, foundAt: now });
   for (const p of found.contactPages || []) if (!o.contactPages.includes(p)) o.contactPages.push(p);
+  if (found.description) o.description = found.description;
+  if (found.siteName) o.siteName = found.siteName;
+  if (found.headlines?.length) { o.headlines = found.headlines.slice(0, 10); o.headlinesAt = now; }
   bump(o.beats, ctx.beats); bump(o.topics, [ctx.topicId]);
   if (own) saveOutlets(list);
   return o;
