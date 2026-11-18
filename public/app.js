@@ -435,23 +435,201 @@ function researchPanel(c, r) {
 const SOURCE_LABEL = { import: 'Your list', directory: 'Researched', 'directory-desk': 'Outlet desk', demo: 'Test desk' };
 const srcKey = (t) => (t.demo ? 'demo' : t.source || 'import');
 
-function media(c) {
-  const ex = Object.entries(c.targeting.excluded).filter(([, v]) => v).map(([k, v]) => `${v} ${k.replace(/([A-Z])/g, ' $1').toLowerCase()}`).join(', ');
+// ---- campaign media list: a pick list over Relay's recommendations + your whole database ----
+const SRC = {
+  import: ['Your list', 'acc'], list: ['Your list', 'acc'], directory: ['Researched', 'ok'], research: ['Researched', 'ok'],
+  apollo: ['Apollo.io', ''], 'directory-desk': ['Outlet desk', ''], demo: ['Test desk', ''],
+};
+const keyOf = (t) => (t.source === 'import' ? `c:${t.id}` : t.source === 'directory' ? `j:${t.directoryId}` : `t:${t.id}`);
+const srcOf = (t) => (t.demo ? 'demo' : t.source === 'directory' && t.emailProvider === 'apollo' ? 'apollo' : t.source || 'import');
+const ROLE_LABEL = { exclusive: 'Exclusive', backup: 'Backup', embargo: 'Embargo', launch: 'Launch' };
+const roleOf = (t) => (/^exclusive_backup/.test(t.role) ? 'backup' : t.role);
+
+async function selectionPatch(c, selection, msg) {
+  await api(`campaigns/${c.id}`, { method: 'PATCH', body: { selection } });
+  if (msg) toast(msg);
+  route();
+}
+
+async function media(c) {
+  const locked = Boolean(c.jobs?.length);
+  const allowed = await api(`campaigns/${c.id}/roles`).catch(() => ['launch']);
+  const filter = { q: '', src: '' };
+  const counts = (fn) => c.targets.reduce((m, t) => { const k = fn(t); m[k] = (m[k] || 0) + 1; return m; }, {});
+  const bySrc = counts(srcOf), byRole = counts(roleOf);
+  const tbody = h('tbody', {});
+  const draw = () => {
+    const q = filter.q.toLowerCase();
+    const rows = c.targets.filter((t) => (!filter.src || srcOf(t) === filter.src) && (!q || `${t.name} ${t.outlet} ${t.email}`.toLowerCase().includes(q)));
+    tbody.replaceChildren(...rows.map((t) => {
+      const k = keyOf(t);
+      const [sl, sk] = SRC[srcOf(t)] || ['Contact', ''];
+      const roleSel = h('select', { class: 'mini', 'aria-label': `Role for ${t.name}`, disabled: locked, onchange: (e) => selectionPatch(c, { roles: { [k]: e.target.value } }, `${t.name}: ${ROLE_LABEL[e.target.value]}`) },
+        ...allowed.map((r) => h('option', { value: r, selected: roleOf(t) === r }, ROLE_LABEL[r])));
+      return h('tr', {},
+        h('td', { class: 'pick' }, h('input', { type: 'checkbox', checked: true, disabled: locked, 'aria-label': `Keep ${t.name} in this campaign`, onchange: () => selectionPatch(c, { remove: [k] }, `Removed ${t.name}`) })),
+        h('td', {}, h('span', { class: 'o' }, t.demo ? t.outlet : t.name), h('div', { class: 'small muted' }, t.demo ? 'News desk' : t.outlet)),
+        h('td', {}, h('div', { class: 'small' }, t.email), h('div', { class: 'src' }, badge(sl, sk), t.manual ? badge('Added by you') : null,
+          t.emailProvider === 'apollo' ? null : t.emailSource ? h('a', { href: t.emailSource, target: '_blank', rel: 'noopener' }, 'source ↗') : null)),
+        h('td', {}, roleSel),
+        h('td', { class: 'num' }, t.score),
+        h('td', { class: 'muted small' }, t.reason));
+    }));
+    if (!rows.length) tbody.append(h('tr', {}, h('td', { colspan: 6, class: 'muted' }, 'Nobody matches this filter.')));
+  };
+  const search = h('input', { type: 'search', placeholder: 'Filter this list…', 'aria-label': 'Filter the media list', oninput: (e) => { filter.q = e.target.value; draw(); } });
+  const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Source' });
+  const chipSet = [['', `All ${c.targets.length}`], ...Object.entries(bySrc).map(([k, n]) => [k, `${(SRC[k] || [k])[0]} ${n}`])];
+  for (const [k, l] of chipSet) chips.append(h('button', { type: 'button', class: 'chip', 'aria-pressed': String(filter.src === k), onclick: (e) => { filter.src = k; for (const b of chips.children) b.setAttribute('aria-pressed', String(b === e.currentTarget)); draw(); } }, l));
+  draw();
   return h('div', { class: 'stack' },
-    h('div', { class: 'spread' },
-      h('p', { class: 'muted', style: 'max-width:720px;margin:0' }, `${c.targets.length} reporters from ${c.targeting.poolSize} candidates, one per outlet, ranked by beat fit and recent coverage. Excluded: ${ex || 'none'}. Live news search: ${c.discovery.ok ? `${c.discovery.articleCount} recent articles${c.targeting.discovered ? `, ${c.targeting.discovered} outlets not in the database` : ''}` : c.discovery.reason || 'off'}.`),
-      h('div', { class: 'row' }, h('a', { class: 'btn ghost sm', href: `/api/campaigns/${c.id}/media-list.csv`, download: 'media-list.csv' }, 'Export CSV'), h('a', { class: 'btn ghost sm', href: '#/contacts' }, 'Import contacts'),
-        !c.jobs?.length ? h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => patch(c, { retarget: true }, e.currentTarget, 'Media list rebuilt') }, 'Rebuild') : null)),
     researchPanel(c),
-    c.targeting.demoUsed ? h('div', { class: 'banner' }, 'Where no reporter is known yet, outlet news desks with undeliverable .test addresses fill the list for testing. Research or import contacts to go live.') : null,
-    c.targeting.suggestions?.length ? h('section', { class: 'sec' }, h('h4', {}, 'Covered this recently — add a reporter', h('a', { href: '#/contacts' }, 'Import contacts →')),
-      h('ul', { class: 'list' }, ...c.targeting.suggestions.map((x) => h('li', { style: 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px' },
-        h('span', {}, h('span', { class: 'o', style: 'font-family:var(--serif);font-size:18px' }, x.outlet), x.article ? h('small', { class: 'muted', style: 'display:block' }, `“${x.article.title}”`) : null),
-        h('span', { class: 'small muted' }, x.domain))))) : null,
+    locked ? h('div', { class: 'banner' }, 'This campaign has launched, so its media list is locked.') : null,
+    h('div', { class: 'spread' },
+      h('div', {},
+        h('div', { class: 'serif', style: 'font-size:28px;line-height:1.1' }, `${c.targets.length} journalists selected`),
+        h('div', { class: 'small muted', style: 'margin-top:4px' }, Object.entries(byRole).map(([r, n]) => `${n} ${ROLE_LABEL[r]?.toLowerCase() || r}`).join(' · '))),
+      h('div', { class: 'row' },
+        locked ? null : h('button', { class: 'btn pri sm', type: 'button', onclick: () => openAddJournalists(c) }, 'Add journalists', kbd('A')),
+        h('a', { class: 'btn ghost sm', href: `/api/campaigns/${c.id}/media-list.csv`, download: 'media-list.csv' }, 'Export CSV'),
+        locked ? null : h('button', { class: 'btn ghost sm', type: 'button', title: 'Re-run Relay’s recommendations; your additions and removals are kept', onclick: (e) => patch(c, { retarget: true }, e.currentTarget, 'Recommendations refreshed') }, 'Refresh recommendations'))),
+    h('div', { class: 'row', style: 'gap:14px' }, h('div', { style: 'flex:1;min-width:220px;max-width:360px' }, search), chips),
+    c.targeting.demoUsed ? h('p', { class: 'small muted', style: 'margin:0' }, 'Test desks (undeliverable .test addresses) fill outlets where no journalist is known yet. Add journalists, run research or import your list before going live.') : null,
     h('div', { class: 'tablewrap' }, h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Outlet'), h('th', {}, 'Contact'), h('th', {}, 'Role'), h('th', {}, 'Fit'), h('th', {}, 'Why'))),
-      h('tbody', {}, ...c.targets.map((t) => h('tr', {}, h('td', {}, h('span', { class: 'o' }, t.outlet), h('div', { class: 'small muted' }, `tier ${t.tier}`)), h('td', {}, t.name, h('div', { class: 'small muted' }, t.email), h('div', { class: 'src' }, badge(SOURCE_LABEL[srcKey(t)] || 'Contact', srcKey(t) === 'directory' ? 'ok' : ''), t.emailProvider === 'apollo' ? ' via Apollo.io' : t.emailSource ? [' ', h('a', { href: t.emailSource, target: '_blank', rel: 'noopener' }, 'published here ↗')] : null)),
-        h('td', {}, badge(t.role.replace(/_/g, ' ').replace(/exclusive backup (\d)/, 'backup $1'), t.role === 'exclusive' ? 'acc' : '')), h('td', { class: 'num' }, t.score), h('td', { class: 'muted small' }, t.reason)))))));
+      h('thead', {}, h('tr', {}, h('th', { class: 'pick' }, ''), h('th', {}, 'Journalist'), h('th', {}, 'Address'), h('th', {}, 'Role'), h('th', {}, 'Fit'), h('th', {}, 'Why'))),
+      tbody)),
+    c.removedTargets?.length ? h('details', { class: 'more' }, h('summary', {}, `Removed from this campaign (${c.removedTargets.length})`, h('span', { class: 'muted small' }, ' — restore anyone')),
+      h('ul', { class: 'list' }, ...c.removedTargets.map((r) => h('li', { style: 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center' },
+        h('span', {}, r.name, h('span', { class: 'small muted' }, ` · ${r.outlet} · ${r.email}`)),
+        locked ? null : h('button', { class: 'link', type: 'button', onclick: () => selectionPatch(c, { restore: [r.key] }, `Restored ${r.name}`) }, 'Restore'))))) : null,
+    c.targeting.suggestions?.length ? h('section', { class: 'sec' }, h('h4', {}, 'Outlets that covered this recently — no journalist known yet', h('a', { href: '#/journalists' }, 'Import contacts →')),
+      h('ul', { class: 'list' }, ...c.targeting.suggestions.map((x) => h('li', {}, h('span', { class: 'o', style: 'font-family:var(--serif);font-size:18px' }, x.outlet), x.article ? h('small', { class: 'muted', style: 'display:block' }, `“${x.article.title}”`) : null)))) : null);
+}
+
+// Sheet: pick people from the whole database (your list + researched), ranked by fit for this campaign.
+async function openAddJournalists(c) {
+  const st = { q: '', source: '', tag: '', picked: new Set() };
+  const list = h('ul', { class: 'picklist' });
+  const addBtn = h('button', { class: 'btn acc', type: 'button', disabled: true, onclick: async (e) => { await busy(e.currentTarget, 'Adding…', () => api(`campaigns/${c.id}`, { method: 'PATCH', body: { selection: { add: [...st.picked] } } })); closeOverlay(); toast(`Added ${st.picked.size} journalist${st.picked.size === 1 ? '' : 's'}`); route(); } }, 'Add selected');
+  const tagSel = h('select', { 'aria-label': 'Tag' });
+  const srcSel = h('select', { 'aria-label': 'Source' }, ...[['', 'Everyone'], ['list', 'Your list'], ['research', 'Researched'], ['apollo', 'Apollo.io']].map(([v, l]) => h('option', { value: v }, l)));
+  const q = h('input', { type: 'search', placeholder: 'Search name, outlet, beat, tag…', 'aria-label': 'Search journalists' });
+  const selectAll = h('button', { class: 'link', type: 'button' }, 'Select all shown');
+  let rows = [];
+  const upd = () => { addBtn.disabled = !st.picked.size; addBtn.replaceChildren(st.picked.size ? `Add ${st.picked.size} selected` : 'Add selected'); };
+  async function load() {
+    const p = new URLSearchParams({ campaign: c.id });
+    for (const k of ['q', 'source', 'tag']) if (st[k]) p.set(k, st[k]);
+    const r = await api(`people?${p}`);
+    if (tagSel.options.length <= 1) tagSel.replaceChildren(h('option', { value: '' }, 'Any tag'), ...r.tags.map((t) => h('option', { value: t.tag }, `${t.tag} (${t.count})`)));
+    rows = r.rows.filter((x) => x.email);
+    list.replaceChildren(...(rows.length ? rows.map((x) => {
+      const box = h('input', { type: 'checkbox', checked: x.inCampaign || st.picked.has(x.id), disabled: x.inCampaign, onchange: (e) => { e.target.checked ? st.picked.add(x.id) : st.picked.delete(x.id); upd(); } });
+      const s = x.sources.includes('list') ? SRC.list : x.sources.includes('apollo') ? SRC.apollo : SRC.research;
+      return h('li', {}, h('label', { class: 'pickrow' }, box,
+        h('span', {}, h('span', { class: 'o' }, x.name), h('span', { class: 'small muted' }, ` · ${x.outlet}`),
+          h('div', { class: 'src' }, badge(s[0], s[1]), ...x.tags.map((t) => badge(t)), x.latestArticle ? h('span', { class: 'small muted' }, ` “${x.latestArticle.title.slice(0, 60)}”`) : null)),
+        h('span', { class: 'small muted' }, x.inCampaign ? 'In campaign' : x.fit >= 6 ? 'Strong fit' : x.fit >= 3 ? 'Good fit' : x.fit > 0 ? 'Possible' : 'Off topic')));
+    }) : [h('li', { class: 'muted small', style: 'padding:16px' }, 'No journalists with an address match. Import your list or run research from the Media list.')]));
+    upd();
+  }
+  selectAll.addEventListener('click', () => { for (const x of rows) if (!x.inCampaign) st.picked.add(x.id); load(); });
+  let t = null;
+  q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { st.q = q.value; load(); }, 200); });
+  srcSel.addEventListener('change', () => { st.source = srcSel.value; load(); });
+  tagSel.addEventListener('change', () => { st.tag = tagSel.value; load(); });
+  openOverlay(h('div', { class: 'sheet addsheet', role: 'dialog', 'aria-label': 'Add journalists' },
+    h('div', { class: 'addhead' }, h('h2', {}, 'Add journalists'), h('p', { class: 'small muted' }, 'Everyone in your database — your own list and researched reporters — ranked by fit for this campaign.'),
+      h('div', { class: 'row' }, h('div', { style: 'flex:1;min-width:200px' }, q), h('div', { style: 'width:150px' }, srcSel), h('div', { style: 'width:170px' }, tagSel))),
+    list,
+    h('div', { class: 'addfoot' }, selectAll, h('div', { class: 'row' }, h('button', { class: 'btn ghost', type: 'button', onclick: closeOverlay }, 'Cancel'), addBtn))));
+  q.focus();
+  load();
+}
+
+// ---- Journalists: one database of your uploaded contacts + researched reporters ----
+async function viewJournalists() {
+  state.view = 'journalists'; state.campaign = null; setNav('journalists'); renderMode(); state.save = null;
+  knowledge ||= await api('knowledge').catch(() => ({ topics: [] }));
+  const topicLabel = Object.fromEntries((knowledge.topics || []).map((t) => [t.id, t.label]));
+  const params = new URLSearchParams(location.hash.split('?')[1] || '');
+  const show = params.get('show') || 'active';
+  const [data, plan, campaigns] = await Promise.all([api(`people?${params}`), api('plan'), loadList()]);
+  const pro = plan.current === 'pro';
+  const sel = new Set();
+  const setParam = (k, v) => { const p = new URLSearchParams(params); if (v) p.set(k, v); else p.delete(k); location.hash = `#/journalists?${p}`; };
+
+  const q = h('input', { type: 'search', value: params.get('q') || '', placeholder: 'Search name, outlet, email, beat, tag…', 'aria-label': 'Search journalists', onkeydown: (e) => { if (e.key === 'Enter') setParam('q', e.target.value); } });
+  const srcChips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Source' }, ...[['', `All ${data.stats.total}`], ['list', `Your list ${data.stats.list}`], ['research', `Researched ${data.stats.research}`], ['apollo', `Apollo.io ${data.stats.apollo}`]]
+    .map(([v, l]) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String((params.get('source') || '') === v && show !== 'dnc'), onclick: () => { const p = new URLSearchParams(params); p.delete('show'); if (v) p.set('source', v); else p.delete('source'); location.hash = `#/journalists?${p}`; } }, l)),
+    h('button', { type: 'button', class: 'chip', 'aria-pressed': String(show === 'dnc'), onclick: () => setParam('show', show === 'dnc' ? '' : 'dnc') }, `Do not contact ${data.stats.doNotContact}`));
+  const tagSel = h('select', { 'aria-label': 'Tag', onchange: (e) => setParam('tag', e.target.value) }, h('option', { value: '' }, 'Any tag'), ...data.tags.map((t) => h('option', { value: t.tag, selected: params.get('tag') === t.tag }, `${t.tag} (${t.count})`)));
+  const topics = [...new Set(data.rows.flatMap((p) => p.topics))];
+  const topicSel = h('select', { 'aria-label': 'Topic', onchange: (e) => setParam('topic', e.target.value) }, h('option', { value: '' }, 'Any topic'), ...topics.map((t) => h('option', { value: t, selected: params.get('topic') === t }, topicLabel[t] || t)));
+
+  // Bulk actions for checked rows
+  const bulk = h('div', { class: 'bulk', hidden: true });
+  const tagInput = h('input', { type: 'text', placeholder: 'Tag, e.g. Tier 1 tech', 'aria-label': 'Tag to add', list: 'tag-list' });
+  const campSel = h('select', { 'aria-label': 'Campaign' }, h('option', { value: '' }, 'Add to campaign…'), ...campaigns.filter((x) => !['live', 'monitoring', 'complete'].includes(x.status)).map((x) => h('option', { value: x.id }, x.name)));
+  const ids = () => [...sel];
+  const refreshBulk = () => { bulk.hidden = !sel.size; bulk.querySelector('.n').textContent = `${sel.size} selected`; };
+  bulk.append(h('span', { class: 'n' }), h('div', { class: 'row' },
+    h('div', { style: 'width:200px' }, tagInput), h('button', { class: 'btn sm', type: 'button', onclick: async () => { if (!tagInput.value.trim()) return tagInput.focus(); await api('people/tags', { method: 'POST', body: { ids: ids(), add: [tagInput.value.trim()] } }); toast(`Tagged ${sel.size}`); viewJournalists(); } }, 'Add tag'),
+    h('div', { style: 'width:220px' }, campSel), h('button', { class: 'btn sm', type: 'button', onclick: async () => { if (!campSel.value) return campSel.focus(); await api(`campaigns/${campSel.value}`, { method: 'PATCH', body: { selection: { add: ids() } } }); toast(`Added ${sel.size} to the campaign`); location.hash = `#/c/${campSel.value}/media`; } }, 'Add'),
+    h('button', { class: 'btn ghost sm', type: 'button', onclick: async () => { if (!confirm(`Never contact these ${sel.size} people?`)) return; await api('people/do-not-contact', { method: 'POST', body: { ids: ids() } }); toast('Added to do-not-contact'); viewJournalists(); } }, 'Do not contact')));
+
+  const head = h('input', { type: 'checkbox', 'aria-label': 'Select all shown', onchange: (e) => { for (const b of document.querySelectorAll('.prow')) { b.checked = e.target.checked; b.checked ? sel.add(b.value) : sel.delete(b.value); } refreshBulk(); } });
+  const removeOne = async (p) => {
+    const msg = p.kind === 'contact' ? `Remove ${p.name} from your list?` : `Forget ${p.name}? Their data is deleted and their address is never collected again.`;
+    if (!confirm(msg)) return;
+    await api(`people/${encodeURIComponent(p.id)}`, { method: 'DELETE' }); toast(p.kind === 'contact' ? 'Removed from your list' : 'Forgotten and blocked'); viewJournalists();
+  };
+  const fig = (c, n, d) => h('div', { class: 'fig' }, h('div', { class: 'c' }, c), h('div', { class: 'n' }, fmt.n(n)), d ? h('div', { class: 'd' }, d) : null);
+  const importPanel = h('details', { class: 'more', open: !data.stats.total },
+    h('summary', {}, 'Import your contact list (CSV)', h('span', { class: 'muted small' }, ' — from Muck Rack, Cision, Apollo or a spreadsheet')),
+    importer(() => viewJournalists()));
+  state.primary = { run: () => setParam('q', q.value) };
+
+  render(
+    h('div', { class: 'mast' }, h('div', {}, h('div', { class: 'eyebrow' }, 'Your media database'), h('h1', {}, 'Journalists')),
+      h('div', { class: 'row' },
+        h('a', { class: 'btn ghost sm', href: '/api/people/export.csv?source=list', download: 'my-journalists.csv' }, 'Export your list'),
+        pro ? h('a', { class: 'btn ghost sm', href: '/api/people/export.csv', download: 'all-journalists.csv' }, 'Export everyone') : h('a', { class: 'lock', href: '#/plans' }, '🔒 Export researched: Pro'))),
+    h('div', { class: 'statrow' }, fig('Journalists', data.stats.total, 'you can pitch'), fig('From your list', data.stats.list, 'uploaded by you'), fig('Researched', data.stats.research + data.stats.apollo, `incl. ${data.stats.apollo} via Apollo.io`), fig('Need re-checking', data.stats.stale, 'verified over 12 months ago')),
+    importPanel,
+    h('div', { class: 'row', style: 'margin:22px 0 10px;gap:12px' }, h('div', { style: 'flex:1;min-width:220px' }, q), h('div', { style: 'width:180px' }, tagSel), topics.length ? h('div', { style: 'width:200px' }, topicSel) : null),
+    srcChips,
+    h('datalist', { id: 'tag-list' }, ...data.tags.map((t) => h('option', { value: t.tag }))),
+    bulk,
+    data.rows.length ? h('div', { class: 'tablewrap', style: 'margin-top:12px' }, h('table', {},
+      h('thead', {}, h('tr', {}, h('th', { class: 'pick' }, head), h('th', {}, 'Journalist'), h('th', {}, 'Address'), h('th', {}, 'Covers'), h('th', {}, 'Tags'), h('th', {}, 'Latest piece'), h('th', {}, ''))),
+      h('tbody', {}, ...data.rows.map((p) => {
+        const s = p.sources.includes('list') ? SRC.list : p.sources.includes('apollo') ? SRC.apollo : SRC.research;
+        return h('tr', {},
+          h('td', { class: 'pick' }, h('input', { type: 'checkbox', class: 'prow', value: p.id, 'aria-label': `Select ${p.name}`, onchange: (e) => { e.target.checked ? sel.add(p.id) : sel.delete(p.id); refreshBulk(); } })),
+          h('td', {}, h('span', { class: 'o' }, p.name), h('div', { class: 'small muted' }, p.outlet)),
+          h('td', {}, p.email ? h('div', { class: 'small' }, p.email) : h('span', { class: 'small muted' }, 'No address yet'),
+            h('div', { class: 'src' }, badge(s[0], s[1]), p.sources.length > 1 ? badge('+ researched', 'ok') : null, p.stale ? badge('re-check', 'warn') : null,
+              p.emailSource && p.provider !== 'apollo' ? h('a', { href: p.emailSource, target: '_blank', rel: 'noopener' }, 'source ↗') : null)),
+          h('td', { class: 'small muted' }, [...p.topics.map((t) => topicLabel[t] || t), ...p.beats.slice(0, 3)].join(', ') || '—'),
+          h('td', {}, h('div', { class: 'tags' }, ...p.tags.map((t) => h('button', { class: 'badge tagchip', type: 'button', title: `Show everyone tagged ${t}`, onclick: () => setParam('tag', t) }, t)))),
+          h('td', { class: 'small' }, p.latestArticle ? (p.latestArticle.url ? h('a', { href: p.latestArticle.url, target: '_blank', rel: 'noopener' }, p.latestArticle.title.slice(0, 64)) : p.latestArticle.title.slice(0, 64)) : '—'),
+          h('td', {}, h('button', { class: 'link', type: 'button', onclick: () => removeOne(p) }, p.kind === 'contact' ? 'Remove' : 'Forget')));
+      }))))
+      : h('div', { class: 'empty' }, h('h2', {}, data.stats.total || show === 'dnc' ? 'Nobody matches' : 'No journalists yet'), h('p', {}, data.stats.total || show === 'dnc' ? 'Try another search or filter.' : 'Import your contact list above, or build a campaign — Relay researches the reporters who cover your topic and adds them here.')),
+    data.hidden > 0 ? h('div', { class: 'banner', style: 'margin-top:20px' }, `${data.hidden} more researched journalists match. Pro shows your whole database. `, h('a', { href: '#/plans' }, 'See plans →')) : null,
+    h('p', { class: 'small muted', style: 'margin-top:20px' }, '“Your list” is what you upload — Relay never changes or shares it. “Researched” journalists come from addresses outlets publish (or Apollo.io, if connected). Tags are yours: use them to group journalists, then add a whole tag to a campaign.'));
+  refreshBulk();
+}
+
+function importer(done) {
+  const csv = h('textarea', { rows: 6, class: 'mono', placeholder: 'name,email,outlet,domain,beats,timezone,recent_article_title,recent_article_url,recent_article_date,tags\nAlex Kim,alex@example-news.com,Example News,example-news.com,transport;climate,America/Chicago,"Cities add protected bike lanes",https://…,2026-11-02,Tier 1;Friendly' });
+  const file = h('input', { type: 'file', accept: '.csv,text/csv', 'aria-label': 'Choose a CSV file' });
+  file.addEventListener('change', async () => { csv.value = await file.files[0].text(); });
+  return h('div', { class: 'stack', style: 'margin-top:12px' },
+    h('p', { class: 'small muted', style: 'margin:0' }, 'Only name and email are required. Beats improve matching; a recent article enables personalised openers; tags (separated by ;) group people.'),
+    file, csv,
+    h('div', {}, h('button', { class: 'btn pri sm', type: 'button', onclick: (e) => busy(e.currentTarget, 'Importing…', () => api('contacts/import', { method: 'POST', body: csv.value })).then((r) => { toast(`Added ${r.added}, updated ${r.updated}${r.rejected ? `, skipped ${r.rejected} without a valid email` : ''}`); done(); }) }, 'Import')));
 }
 
 async function launch(c) {
@@ -520,64 +698,7 @@ async function viewCampaigns() {
       : h('div', { class: 'empty' }, h('h2', {}, 'No campaigns yet'), h('p', {}, 'Write one sentence about your news to start.'), h('a', { class: 'btn pri', href: '#/', style: 'margin-top:12px' }, 'New campaign')));
 }
 
-async function viewContacts() {
-  state.view = 'contacts'; state.campaign = null; setNav('contacts'); renderMode(); state.save = null;
-  const [contacts, supp] = await Promise.all([api('contacts'), api('suppression')]);
-  const csv = h('textarea', { rows: 7, class: 'mono', placeholder: 'name,email,outlet,domain,beats,timezone,recent_article_title,recent_article_url,recent_article_date\nAlex Kim,alex@example-news.com,Example News,example-news.com,transport;climate,America/Chicago,"Cities add protected bike lanes",https://…,2026-11-02' });
-  const file = h('input', { type: 'file', accept: '.csv,text/csv', 'aria-label': 'Choose a CSV file' });
-  file.addEventListener('change', async () => { csv.value = await file.files[0].text(); });
-  const email = h('input', { type: 'email', placeholder: 'reporter@outlet.com or @domain.com', 'aria-label': 'Email or domain to suppress' });
-  const importBtn = h('button', { class: 'btn pri', type: 'button', onclick: (e) => busy(e.currentTarget, 'Importing…', () => api('contacts/import', { method: 'POST', body: csv.value })).then((r) => { toast(`Added ${r.added}, updated ${r.updated}, rejected ${r.rejected}`); viewContacts(); }) }, 'Import', kbd('⌘↵'));
-  state.primary = { run: () => importBtn.click() };
-  render(h('div', { class: 'mast' }, h('div', {}, h('div', { class: 'eyebrow' }, 'Media database'), h('h1', {}, 'Contacts')), h('a', { class: 'btn ghost', href: '/api/contacts/export.csv', download: 'contacts.csv' }, 'Export CSV')),
-    h('div', { class: 'split', style: 'margin-top:28px' },
-      h('div', { class: 'stack', style: 'gap:28px' },
-        h('section', { class: 'sec stack' }, h('h4', {}, 'Import your journalist list'), h('p', { class: 'small muted', style: 'margin:0' }, 'From Muck Rack, Cision, Apollo or a spreadsheet. Beats drive relevance; a recent article title enables personalised openers.'), file, csv, h('div', {}, importBtn)),
-        h('section', { class: 'sec' }, h('h4', {}, `${contacts.length} contacts`),
-          contacts.length ? h('table', {}, h('tbody', {}, ...contacts.map((x) => h('tr', {}, h('td', {}, h('span', { class: 'o' }, x.name), h('div', { class: 'small muted' }, x.email)), h('td', {}, x.outlet), h('td', { class: 'muted small' }, (x.beats || []).join(', '))))))
-            : h('p', { class: 'muted small', style: 'margin-top:12px' }, 'None yet. Test campaigns use outlet news desks with undeliverable .test addresses.'))),
-      h('div', { class: 'vr' }),
-      h('aside', {}, h('section', { class: 'sec stack' }, h('h4', {}, `Do not contact (${supp.length})`), h('p', { class: 'small muted', style: 'margin:0' }, 'Opt-outs and “not my beat” replies are added automatically and never pitched again.'),
-        email, h('div', {}, h('button', { class: 'btn ghost sm', type: 'button', onclick: (e) => busy(e.currentTarget, 'Saving…', () => api('suppression', { method: 'POST', body: { email: email.value } })).then(() => viewContacts()) }, 'Add')),
-        supp.length ? h('ul', { class: 'list small' }, ...supp.map((s) => h('li', {}, s.email, h('span', { class: 'muted' }, ` — ${s.reason.replace(/_/g, ' ')}`)))) : null))));
-}
-
-// ------------------------------------------------------------------ directory & plans
-
-const TOPIC_LABELS = {};
-async function viewDirectory() {
-  state.view = 'directory'; state.campaign = null; setNav('directory'); renderMode(); state.save = null;
-  knowledge ||= await api('knowledge').catch(() => ({ topics: [] }));
-  for (const t of knowledge.topics || []) TOPIC_LABELS[t.id] = t.label;
-  const params = new URLSearchParams(location.hash.split('?')[1] || '');
-  const [stats, plan] = await Promise.all([api('directory/stats'), api('plan')]);
-  const data = await api(`directory?${params}`);
-  const pro = plan.current === 'pro';
-  const q = h('input', { type: 'search', value: params.get('q') || '', placeholder: 'Search reporters, outlets, topics…', 'aria-label': 'Search the directory' });
-  const topic = h('select', { 'aria-label': 'Topic' }, h('option', { value: '' }, 'All topics'), ...Object.entries(stats.topics).sort((a, b) => b[1] - a[1]).map(([k, n]) => h('option', { value: k, selected: params.get('topic') === k }, `${TOPIC_LABELS[k] || k} (${n})`)));
-  const go = () => { const p = new URLSearchParams(); if (q.value) p.set('q', q.value); if (topic.value) p.set('topic', topic.value); location.hash = `#/directory?${p}`; };
-  q.addEventListener('keydown', (e) => { if (e.key === 'Enter') go(); });
-  topic.addEventListener('change', go);
-  state.primary = { run: go };
-  const fig = (c, n, d) => h('div', { class: 'fig' }, h('div', { class: 'c' }, c), h('div', { class: 'n' }, fmt.n(n)), d ? h('div', { class: 'd' }, d) : null);
-  const hidden = data.total - data.rows.length;
-  render(
-    h('div', { class: 'mast' }, h('div', {}, h('div', { class: 'eyebrow' }, 'Research directory'), h('h1', {}, 'Journalists')),
-      pro ? h('a', { class: 'btn ghost', href: '/api/directory/export.csv', download: 'relay-directory.csv' }, 'Export CSV') : h('a', { class: 'lock', href: '#/plans' }, '🔒 Export is a Pro feature')),
-    h('div', { class: 'statrow' }, fig('Reporters', stats.journalists, 'found by your campaigns'), fig('With an address', stats.withEmail, 'published by their outlet'), fig('Outlets', stats.outlets), fig('Need re-checking', stats.stale, 'verified over 12 months ago')),
-    h('div', { class: 'row', style: 'margin:24px 0 8px' }, h('div', { style: 'flex:1;min-width:220px' }, q), h('div', { style: 'width:240px' }, topic)),
-    data.rows.length ? h('div', { class: 'tablewrap' }, h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Reporter'), h('th', {}, 'Address'), h('th', {}, 'Covers'), h('th', {}, 'Latest piece'), h('th', {}, ''))),
-      h('tbody', {}, ...data.rows.map((j) => h('tr', {},
-        h('td', {}, h('span', { class: 'o' }, j.name), h('div', { class: 'small muted' }, j.outlet)),
-        h('td', {}, j.email ? [h('div', {}, j.email.address), h('div', { class: 'src' }, `verified ${j.email.verifiedAt.slice(0, 10)} · `, j.email.provider === 'apollo' ? 'via Apollo.io' : h('a', { href: j.email.source, target: '_blank', rel: 'noopener' }, 'source ↗'))] : h('span', { class: 'muted small' }, 'No address yet')),
-        h('td', { class: 'small muted' }, [...Object.keys(j.topics).map((t) => TOPIC_LABELS[t] || t), ...Object.keys(j.beats).slice(0, 3)].join(', ')),
-        h('td', { class: 'small' }, j.articles[0] ? h('a', { href: j.articles[0].url, target: '_blank', rel: 'noopener' }, j.articles[0].title.slice(0, 70)) : '—'),
-        h('td', {}, h('button', { class: 'link', type: 'button', title: 'Delete this person’s data and never collect it again', onclick: async () => { if (confirm(`Remove ${j.name} and never collect their address again?`)) { await api(`directory/journalists/${encodeURIComponent(j.id)}`, { method: 'DELETE' }); toast('Removed and suppressed'); viewDirectory(); } } }, 'Forget')))))))
-      : h('div', { class: 'empty' }, h('h2', {}, stats.journalists ? 'No matches' : 'Your directory is empty'), h('p', {}, stats.journalists ? 'Try another search.' : 'Build a campaign: Relay researches the reporters who cover your topic and keeps them here for next time.')),
-    hidden > 0 ? h('div', { class: 'banner', style: 'margin-top:20px' }, `${hidden} more reporters match. Pro shows the whole directory and reuses all of it in new campaigns. `, h('a', { href: '#/plans' }, 'See plans →')) : null,
-    h('p', { class: 'small muted', style: 'margin-top:20px' }, 'Only addresses the outlets publish themselves, each with its source. “Forget” deletes a person’s data and blocks it from being collected again.'));
-}
+// ------------------------------------------------------------------ plans
 
 async function viewPlans() {
   state.view = 'plans'; state.campaign = null; setNav(''); renderMode(); state.save = null;
@@ -624,9 +745,10 @@ async function openPalette() {
   }
   add('Go to', 'New campaign', () => { location.hash = '#/'; }, 'N');
   add('Go to', 'Campaigns', () => { location.hash = '#/campaigns'; }, 'C');
-  add('Go to', 'Contacts', () => { location.hash = '#/contacts'; });
-  add('Go to', 'Journalist directory', () => { location.hash = '#/directory'; }, 'D');
+  add('Go to', 'Journalists', () => { location.hash = '#/journalists'; }, 'J');
+  add('Actions', 'Import a contact list (CSV)', () => { location.hash = '#/journalists'; });
   add('Go to', 'Plans', () => { location.hash = '#/plans'; });
+  if (c && !c.jobs?.length) add('Actions', 'Add journalists to this campaign', () => { location.hash = `#/c/${c.id}/media`; setTimeout(() => openAddJournalists(c), 300); }, 'A');
   if (c && !c.jobs?.length) add('Actions', 'Find journalists for this campaign', () => api(`campaigns/${c.id}/research`, { method: 'POST', body: {} }).then(() => { toast('Researching journalists…'); location.hash = `#/c/${c.id}/media`; route(); }).catch((e) => toast(e.message)));
   add('Actions', 'Run a test with the sample brief', async () => { toast('Running the sample test…'); const r = await api('test-campaign', { method: 'POST', body: {} }); location.hash = `#/c/${r.id}/results`; });
   for (const x of state.list.slice(0, 12)) add('Campaigns', x.name, () => { location.hash = `#/c/${x.id}`; }, (STATUS[x.status] || [x.status])[0]);
@@ -671,7 +793,8 @@ function openShortcuts() {
       row('Campaign sections', '1', '2', '3', '4', '5'),
       row('New campaign', 'N'),
       row('Campaigns', 'C'),
-      row('Journalist directory', 'D'),
+      row('Journalists', 'J'),
+      row('Add journalists (on a campaign)', 'A'),
       row('Focus the news box', '/'),
       row('Close a dialog', 'Esc'),
       row('This list', '?'))));
@@ -695,7 +818,8 @@ document.addEventListener('keydown', (e) => {
   if (e.key === '?') { e.preventDefault(); openShortcuts(); }
   else if (e.key === 'n') { location.hash = '#/'; }
   else if (e.key === 'c') { location.hash = '#/campaigns'; }
-  else if (e.key === 'd') { location.hash = '#/directory'; }
+  else if (e.key === 'j') { location.hash = '#/journalists'; }
+  else if (e.key === 'a' && state.campaign && !state.campaign.jobs?.length) { e.preventDefault(); openAddJournalists(state.campaign); }
   else if (e.key === '/' && state.view === 'new') { e.preventDefault(); $('#news')?.focus(); }
   else if (/^[1-5]$/.test(e.key) && state.campaign) { location.hash = `#/c/${state.campaign.id}/${TABS[Number(e.key) - 1][0]}`; }
 });
@@ -708,8 +832,8 @@ async function route() {
   const [, kind, id, tab] = location.hash.replace(/^#/, '').split('/');
   if (kind === 'c' && id) return viewCampaign(id, tab);
   if (kind === 'campaigns') return viewCampaigns();
-  if (kind === 'contacts') return viewContacts();
-  if (kind?.startsWith('directory')) return viewDirectory();
+  if (kind?.startsWith('journalists')) return viewJournalists();
+  if (kind === 'contacts' || kind?.startsWith('directory')) { location.replace('#/journalists'); return; }
   if (kind === 'plans') return viewPlans();
   return viewNew();
 }

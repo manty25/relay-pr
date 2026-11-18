@@ -106,10 +106,31 @@ and the Media list shows its progress:
 Researched reporters replace placeholder desks in the media list. Pitches open with their own recent article,
 and the first message says where their address was published, as GDPR Art. 14 requires.
 
-Everything found is saved in the **Directory** (top navigation). Over time it becomes your own media database,
-organised by topic: new campaigns on a topic you've covered before get a ready list straight away. "Forget"
-removes a person and blocks their address from being collected again. Importing your own contact list (CSV)
-still works as before, and your list always takes priority.
+### Journalists: one database
+
+The **Journalists** page (top navigation, `J`) lists everyone you can pitch in one table:
+
+- your uploaded contacts ("Your list")
+- reporters Relay researched, including any found via Apollo.io ("Researched")
+
+Use the source chips, search, topic and **tags** (your own categories such as "Tier 1 tech", "Friendly",
+"Texas") to slice it. Tick several rows to tag them, add them to a campaign, or mark them do-not-contact. Import a
+CSV from the same page (a `tags` column is supported). "Remove" deletes someone from your list; "Forget" deletes
+a researched person and blocks their address from being collected again. Over time this becomes your own
+media database organised by topic, and new campaigns on familiar topics start with a ready list.
+
+### Choosing journalists for a campaign
+
+A campaign's **Media list** starts with Relay's recommendations, from both your list and research, one per
+outlet.
+
+- Untick anyone to remove them; they stay under "Removed" so you can restore them.
+- Change a role (Exclusive, Backup, Embargo, Launch) with its dropdown. There is always exactly one exclusive.
+- Press **Add journalists** (`A`) to pick from your whole database, ranked by fit for this campaign. Filter by
+  tag to add a whole group.
+
+Your choices are kept when research finishes or recommendations are refreshed. The list locks once the campaign
+launches.
 
 Rules: [docs/STANDARDS.md §8](docs/STANDARDS.md).
 
@@ -169,8 +190,8 @@ button points, for example a Stripe payment link or a sales form. Taking the pay
 
 ## Going live
 
-1. Import your journalist contacts (`node cli.js import-contacts list.csv` or Contacts in the UI). Columns:
-   `name,email,outlet,domain,beats,timezone,recent_article_title,recent_article_url,recent_article_date`.
+1. Import your journalist contacts (`node cli.js import-contacts list.csv` or Journalists → Import in the UI), and/or let research find them. Columns:
+   `name,email,outlet,domain,beats,timezone,recent_article_title,recent_article_url,recent_article_date,tags`.
 2. Switch the campaign to live mode. Demo desks drop out and the list is rebuilt from your contacts.
 3. Fill the compliance items: sender, postal address, legal basis.
 4. Clear all blocking QA issues, including every `[TK]` placeholder, and get the drafted quote approved.
@@ -183,7 +204,7 @@ service choice and a checklist; you submit it to the wire service you choose.
 ## Tests
 
 ```bash
-npm test             # 64 tests, named after the standards they enforce
+npm test             # 70 tests, named after the standards they enforce
 ```
 
 The tests run offline and include a mock Messages API that checks the Claude writing path end to end.

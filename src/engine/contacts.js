@@ -28,6 +28,7 @@ export function importContactsCsv(text) {
       tier: Number(r.tier) || 0,
       timezone: isValidTimeZone(r.timezone) ? r.timezone : '',
       recentArticle: r.recent_article_title ? { title: r.recent_article_title, url: r.recent_article_url || '', date: r.recent_article_date || '' } : null,
+      tags: [...new Set([...(byEmail.get(email.toLowerCase())?.tags || []), ...(r.tags || r.tag || r.lists || '').split(/[;|]/).map((t) => t.trim()).filter(Boolean)])],
       source: 'import',
     };
     if (byEmail.has(email.toLowerCase())) updated++; else added++;

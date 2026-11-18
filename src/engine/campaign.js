@@ -3,13 +3,14 @@ import { normalizeBrief, buildFactSheet } from './brief.js';
 import { classify, newsworthiness } from './analyze.js';
 import { chooseChannels, launchTime, buildTimeline, estimate } from './strategy.js';
 import { discoverCoverage, topicQuery, findMentions } from './discovery.js';
-import { buildTargets } from './targeting.js';
+import { buildTargets, findOutlet } from './targeting.js';
 import { runQa } from './qa.js';
 import { loadContacts, loadSuppression, loadHistory, suppress, recordPitch, markReplied } from './contacts.js';
 import { contactsForCampaign, deskContactsForCampaign, mergeResearch } from './directory.js';
 import { researchJournalists } from './research.js';
 import { apolloEnabled, apolloFill } from './apollo.js';
 import { currentPlan } from '../plans.js';
+import { personById, asContact, fitFor, personKeyOf } from './people.js';
 import { writeOffline, quoteParagraph } from '../generate/offline.js';
 import { llmAvailable, writeWithClaude, repairWithClaude, MODEL } from '../generate/claude.js';
 import { pitchFor, followUpFor, releaseText, wirePackage, newsroomHtml, defaultOpener } from '../generate/compose.js';
@@ -83,6 +84,72 @@ function retarget(c, disc) {
   });
   c.targets = targets;
   c.targeting = { excluded, poolSize, demoUsed, count: targets.length, discovered, suggestions };
+  applySelection(c);
+}
+
+// ---------------------------------------------------------------- your choices for this campaign
+
+const ROLE_PHASE = { exclusive: 'exclusive_offer', backup: 'exclusive_offer', embargo: 'embargo_prebrief' };
+export function rolesAllowed(c) {
+  const phases = new Set((c.plan?.timeline || []).map((s) => s.phase));
+  return ['exclusive', 'backup', 'embargo', 'launch'].filter((r) => !ROLE_PHASE[r] || phases.has(ROLE_PHASE[r]));
+}
+const roleOf = (t) => (/^exclusive_backup/.test(t.role) ? 'backup' : t.role);
+
+// Applies the user's additions, removals and role changes on top of Relay's recommended list.
+function applySelection(c) {
+  const sel = (c.selection ||= { included: [], excluded: [], roles: {} });
+  const excluded = new Set(sel.excluded);
+  c.removedTargets = c.targets.filter((t) => excluded.has(personKeyOf(t))).map((t) => ({ key: personKeyOf(t), name: t.name, outlet: t.outlet, email: t.email }));
+  const targets = c.targets.filter((t) => !excluded.has(personKeyOf(t)));
+  const keys = new Set(targets.map(personKeyOf));
+  const emails = new Set(targets.map((t) => t.email.toLowerCase()));
+  for (const pid of sel.included) {
+    if (keys.has(pid) || excluded.has(pid)) continue;
+    const p = personById(pid);
+    if (!p || !p.email || p.doNotContact || emails.has(p.email.toLowerCase())) continue;
+    const ct = asContact(p);
+    const o = findOutlet(ct.domain);
+    targets.push({
+      ...ct, outlet: ct.outlet || o?.name || ct.domain, tier: ct.tier || o?.tier || 3, reach: o?.reach || 's', region: o?.region || c.brief.region,
+      score: Math.min(100, 50 + Math.round(fitFor(p, c) * 5)), relevance: 1, matchedBeats: p.beats.filter((b) => c.analysis.beats.includes(b)),
+      reason: 'added by you', manual: true, role: 'launch', timezone: ct.timezone || c.brief.timezone,
+    });
+    keys.add(pid); emails.add(p.email.toLowerCase());
+  }
+  // Role changes, then keep the sequence coherent: one exclusive, numbered backups.
+  const allowed = rolesAllowed(c);
+  for (const t of targets) {
+    const r = sel.roles[personKeyOf(t)];
+    if (r && allowed.includes(r)) t.role = r === 'backup' ? 'exclusive_backup' : r;
+    else if (!allowed.includes(roleOf(t))) t.role = 'launch';
+  }
+  const chosen = targets.find((t) => sel.roles[personKeyOf(t)] === 'exclusive');
+  for (const t of targets) if (t.role === 'exclusive' && chosen && t !== chosen) t.role = 'exclusive_backup';
+  if (allowed.includes('exclusive') && !targets.some((t) => t.role === 'exclusive')) {
+    const promote = targets.find((t) => /^exclusive_backup/.test(t.role));
+    if (promote) promote.role = 'exclusive';
+  }
+  let n = 0;
+  for (const t of targets) { if (/^exclusive_backup/.test(t.role)) t.role = `exclusive_backup_${++n}`; t.exclusive = t.role === 'exclusive'; }
+  c.targets = targets;
+  c.targeting.count = targets.length;
+}
+
+export function updateSelection(c, { add = [], remove = [], restore = [], roles = {} } = {}) {
+  if (c.jobs?.length) throw new Error('The media list is locked once the campaign has launched.');
+  const sel = (c.selection ||= { included: [], excluded: [], roles: {} });
+  for (const id of add) { if (!sel.included.includes(id)) sel.included.push(id); sel.excluded = sel.excluded.filter((x) => x !== id); }
+  for (const k of remove) { if (!sel.excluded.includes(k)) sel.excluded.push(k); sel.included = sel.included.filter((x) => x !== k); delete sel.roles[k]; }
+  for (const k of restore) sel.excluded = sel.excluded.filter((x) => x !== k);
+  for (const [k, r] of Object.entries(roles)) {
+    if (r === 'exclusive') for (const [k2, r2] of Object.entries(sel.roles)) if (r2 === 'exclusive') sel.roles[k2] = 'backup';
+    sel.roles[k] = r;
+  }
+  retarget(c);
+  reassemble(c);
+  if (c.approvedAt) { c.approvedAt = null; c.status = 'ready'; } // DS-2: the list changed
+  return c;
 }
 
 // Your own list first, then reporters and desks from the research directory (plan-limited reuse).
@@ -314,6 +381,7 @@ export async function updateCampaign(c, patch = {}) {
     c.approvedAt = null;
   }
   if (patch.retarget && !c.jobs?.length) { retarget(c); reassemble(c); c.approvedAt = null; }
+  if (patch.selection) updateSelection(c, patch.selection);
   c.qa = runQa({ assets: c.assets, brief: c.brief, launchAt: c.plan.launchAt });
   saveCampaign(c);
   return c;

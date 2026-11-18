@@ -20,6 +20,9 @@ import { runResearch, researchState, researchEnabled } from './src/engine/campai
 import { searchDirectory, directoryStats, forgetJournalist, directoryCsv } from './src/engine/directory.js';
 import { currentPlan, PLANS, upgradeUrl } from './src/plans.js';
 import { apolloEnabled, apolloCap } from './src/engine/apollo.js';
+import { listPeople, allTags, peopleStats, tagPeople, removePerson, personById, personKeyOf, fitFor } from './src/engine/people.js';
+import { rolesAllowed } from './src/engine/campaign.js';
+import { csvEscape } from './src/util.js';
 import { CHANNELS } from './src/knowledge/channels.js';
 
 const PORT = Number(process.env.PORT || 8787);
@@ -90,6 +93,38 @@ async function api(req, res, parts, url) {
 
   if (a === 'plan' && m === 'GET') return send(res, 200, { current: currentPlan().id, plans: Object.values(PLANS).map((p) => ({ ...p, research: p.research, directory: { ...p.directory, reusePerCampaign: Number.isFinite(p.directory.reusePerCampaign) ? p.directory.reusePerCampaign : null, browseLimit: Number.isFinite(p.directory.browseLimit) ? p.directory.browseLimit : null } })), upgradeUrl: upgradeUrl() });
 
+  // One list of everyone: your uploaded contacts + researched reporters.
+  if (a === 'people') {
+    const plan = currentPlan();
+    if (m === 'GET' && !b) {
+      const cid = url.searchParams.get('campaign');
+      const camp = cid ? loadCampaign(cid) : null;
+      const r = listPeople({ q: url.searchParams.get('q') || '', source: url.searchParams.get('source') || '', tag: url.searchParams.get('tag') || '', topic: url.searchParams.get('topic') || '', show: url.searchParams.get('show') || 'active', researchLimit: plan.directory.browseLimit, campaign: camp });
+      if (camp) {
+        const inList = new Set(camp.targets.map(personKeyOf));
+        const emails = new Set(camp.targets.map((t) => t.email.toLowerCase()));
+        r.rows = r.rows.map((p) => ({ ...p, inCampaign: inList.has(p.id) || (p.alsoId && inList.has(p.alsoId)) || emails.has(String(p.email).toLowerCase()) }));
+      }
+      return send(res, 200, { ...r, tags: allTags(), stats: peopleStats(), plan: plan.id });
+    }
+    if (m === 'GET' && b === 'export.csv') {
+      const scope = url.searchParams.get('source') === 'list' ? 'list' : 'all';
+      if (scope === 'all' && !plan.directory.export) throw new HttpError(402, 'Exporting researched journalists is part of the Pro plan. Your own list can always be exported.');
+      const rows = listPeople({ source: scope === 'list' ? 'list' : '' }).rows;
+      const lines = ['name,email,outlet,domain,sources,tags,beats,latest_article,email_source'];
+      for (const p of rows) lines.push([p.name, p.email, p.outlet, p.domain, p.sources.join(';'), p.tags.join(';'), p.beats.join(';'), p.latestArticle?.title, p.emailSource].map(csvEscape).join(','));
+      return send(res, 200, lines.join('\n') + '\n', TYPES['.csv']);
+    }
+    if (m === 'POST' && b === 'tags') { const body = await readBody(req); return send(res, 200, { updated: tagPeople(body.ids || [], { add: body.add || [], remove: body.remove || [] }) }); }
+    if (m === 'POST' && b === 'do-not-contact') {
+      const body = await readBody(req);
+      let n = 0;
+      for (const id of body.ids || []) { const p = personById(id); if (p?.email) { suppress(p.email, 'manual'); n++; } }
+      return send(res, 200, { suppressed: n });
+    }
+    if (m === 'DELETE' && b) return send(res, removePerson(decodeURIComponent(b)) ? 200 : 404, { ok: true });
+  }
+
   if (a === 'directory') {
     const plan = currentPlan();
     if (m === 'GET' && b === 'stats') return send(res, 200, directoryStats());
@@ -157,6 +192,7 @@ async function api(req, res, parts, url) {
       if (c2 === 'replies' && m === 'POST') { const ev = logReply(camp, await readBody(req)); saveCampaign(camp); return send(res, 200, ev); }
       if (c2 === 'coverage' && m === 'POST') { const ev = addCoverage(camp, await readBody(req)); saveCampaign(camp); return send(res, 200, ev || { duplicate: true }); }
       if (c2 === 'compliance' && m === 'GET') return send(res, 200, complianceChecks(camp));
+      if (c2 === 'roles' && m === 'GET') return send(res, 200, rolesAllowed(camp));
       if (c2 === 'report' && m === 'GET') return send(res, 200, computeReport(camp));
       if (c2 === 'report.html' && m === 'GET') return send(res, 200, reportHtml(camp), TYPES['.html']);
       if (c2 === 'media-list.csv' && m === 'GET') return send(res, 200, contactsCsv(camp.targets), TYPES['.csv']);

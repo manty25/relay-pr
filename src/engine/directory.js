@@ -11,7 +11,7 @@ export const STALE_DAYS = 365; // RS-6
 
 export const loadJournalists = () => readJson(J_FILE(), []);
 export const loadOutlets = () => readJson(O_FILE(), []);
-const saveJournalists = (list) => writeJson(J_FILE(), list);
+export const saveJournalists = (list) => writeJson(J_FILE(), list);
 const saveOutlets = (list) => writeJson(O_FILE(), list);
 
 const bump = (obj, keys) => { for (const k of keys || []) if (k) obj[k] = (obj[k] || 0) + 1; return obj; };

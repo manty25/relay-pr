@@ -117,7 +117,7 @@ same kind of processing media databases do; these rules keep it lawful and respe
 | RS-4 | **Transparency (GDPR Art. 14).** The first message to a researched contact says where their address was found, next to the opt-out. |
 | RS-5 | **Objection and erasure.** Opt-outs apply everywhere. "Forget" deletes a person's record and suppresses their addresses so research never collects them again. |
 | RS-6 | **Freshness.** Addresses not verified in 12 months must be re-checked before a live send (compliance gate). |
-| RS-7 | **Your lists stay yours.** Imported contact lists are kept separate from the research directory and never merged into it. |
+| RS-7 | **Your lists stay yours.** Uploaded contacts are shown together with researched journalists (labelled "Your list"), but stored separately: research never changes or overwrites them, they take priority when the same person appears in both, and they are never shared outside your deployment. |
 | RS-8 | **Professional data only.** Name, outlet, role, work address, public professional profiles and articles. No personal phone numbers, home addresses or personal email providers; no advertising, sales or subscription addresses. |
 | RS-9 | **Licensed databases.** Besides published addresses, Relay may use a contact database the operator holds a licence for (Apollo.io, with the operator's own API key). Only addresses the provider marks *verified*, matched with high or medium confidence, at the outlet's own domain, for editorial staff. They are labelled with the provider, disclosed in the first message, capped per campaign (`RELAY_APOLLO_MAX_PER_CAMPAIGN`), kept within the operator's deployment, and never pooled into a shared directory. |
 
