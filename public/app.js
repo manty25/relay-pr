@@ -510,13 +510,17 @@ async function selectionPatch(c, selection, msg) {
 async function media(c) {
   const locked = Boolean(c.jobs?.length);
   const allowed = await api(`campaigns/${c.id}/roles`).catch(() => ['launch']);
-  const filter = { q: '', src: '' };
+  const filter = { q: '', src: '', ids: null, emails: new Set(), others: [], hidden: 0 };
+  const othersBox = h('div', {});
   const counts = (fn) => c.targets.reduce((m, t) => { const k = fn(t); m[k] = (m[k] || 0) + 1; return m; }, {});
   const bySrc = counts(srcOf), byRole = counts(roleOf);
   const tbody = h('tbody', {});
   const draw = () => {
-    const q = filter.q.toLowerCase();
-    const rows = c.targets.filter((t) => (!filter.src || srcOf(t) === filter.src) && (!q || `${t.name} ${t.outlet} ${t.email}`.toLowerCase().includes(q)));
+    const q = filter.q.trim().toLowerCase();
+    // Same meaning-based search as the Journalists page (server-side), plus plain text for outlet desks.
+    const inQuery = (t) => !q || filter.ids?.has(keyOf(t)) || filter.emails.has(String(t.email).toLowerCase()) || `${t.name} ${t.outlet} ${t.email}`.toLowerCase().includes(q);
+    const rows = c.targets.filter((t) => (!filter.src || srcOf(t) === filter.src) && inQuery(t));
+    drawOthers(rows.length);
     tbody.replaceChildren(...rows.map((t) => {
       const k = keyOf(t);
       const [sl, sk] = SRC[srcOf(t)] || ['Contact', ''];
@@ -533,9 +537,38 @@ async function media(c) {
         h('td', { class: 'num' }, t.score),
         h('td', { class: 'muted small' }, t.reason));
     }));
-    if (!rows.length) tbody.append(h('tr', {}, h('td', { colspan: 6, class: 'muted' }, 'Nobody matches this filter.')));
+    if (!rows.length) tbody.append(h('tr', {}, h('td', { colspan: 6, class: 'muted' }, filter.q ? 'Nobody in this campaign matches — see your database below.' : 'Nobody matches this filter.')));
   };
-  const search = h('input', { type: 'search', placeholder: 'Filter this list…', 'aria-label': 'Filter the media list', oninput: (e) => { filter.q = e.target.value; draw(); } });
+  // People in your database who match the search but aren't in this campaign yet.
+  function drawOthers(inCampaignMatches) {
+    if (!filter.q.trim()) { othersBox.replaceChildren(); return; }
+    const addable = filter.others.filter((x) => x.email);
+    othersBox.replaceChildren(h('section', { class: 'sec', style: 'margin-top:8px' },
+      h('h4', {}, `Also in your database — not in this campaign (${filter.others.length})`,
+        !locked && addable.length > 1 ? h('button', { class: 'link', type: 'button', onclick: () => selectionPatch(c, { add: addable.map((x) => x.id) }, `Added ${addable.length} journalists`) }, `Add all ${addable.length}`) : null),
+      filter.others.length ? h('ul', { class: 'list' }, ...filter.others.slice(0, 100).map((x) => h('li', { style: 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center' },
+        h('span', {}, h('button', { class: 'namebtn o', type: 'button', onclick: () => openCard(x.id, c.id) }, x.name), h('span', { class: 'small muted' }, ` · ${x.outlet}`),
+          h('div', { class: 'small muted' }, x.email ? [x.fit >= 6 ? 'Strong fit' : x.fit >= 3 ? 'Good fit' : x.fit > 0 ? 'Possible fit' : 'Off topic for this campaign', x.latestArticle ? ` · wrote “${x.latestArticle.title.slice(0, 60)}”` : ''] : 'No address yet — can’t be pitched')),
+        locked ? null : h('button', { class: 'btn ghost sm', type: 'button', disabled: !x.email, onclick: (e) => busy(e.currentTarget, 'Adding…', () => selectionPatch(c, { add: [x.id] }, `Added ${x.name}`)) }, 'Add'))))
+        : h('p', { class: 'small muted', style: 'margin-top:10px' }, inCampaignMatches ? 'Everyone who matches is already in this campaign.' : 'Nobody in your database matches either. Try a broader search, import contacts, or run research.'),
+      filter.others.length > 100 ? h('p', { class: 'small muted' }, `Showing 100 of ${filter.others.length}. Narrow the search, or use Add journalists to filter by tag or topic.`) : null,
+      filter.hidden ? h('p', { class: 'small muted' }, `${filter.hidden} more researched journalists match but are outside your plan’s view. `, h('a', { href: '#/plans' }, 'See plans →')) : null));
+  }
+  let searchTimer = null;
+  const search = h('input', { type: 'search', placeholder: 'Search this campaign and your whole database…', 'aria-label': 'Search journalists', oninput: (e) => {
+    filter.q = e.target.value;
+    clearTimeout(searchTimer);
+    if (!filter.q.trim()) { filter.ids = null; filter.emails = new Set(); filter.others = []; filter.hidden = 0; draw(); return; }
+    searchTimer = setTimeout(async () => {
+      const r = await api(`people?${new URLSearchParams({ campaign: c.id, q: filter.q })}`).catch(() => ({ rows: [], hidden: 0 }));
+      if (e.target.value !== filter.q) return; // a newer keystroke is on its way
+      filter.ids = new Set(r.rows.flatMap((x) => [x.id, x.alsoId].filter(Boolean)));
+      filter.emails = new Set(r.rows.map((x) => String(x.email).toLowerCase()).filter(Boolean));
+      filter.others = r.rows.filter((x) => !x.inCampaign);
+      filter.hidden = r.hidden || 0;
+      draw();
+    }, 250);
+  } });
   const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Source' });
   const chipSet = [['', `All ${c.targets.length}`], ...Object.entries(bySrc).map(([k, n]) => [k, `${(SRC[k] || [k])[0]} ${n}`])];
   for (const [k, l] of chipSet) chips.append(h('button', { type: 'button', class: 'chip', 'aria-pressed': String(filter.src === k), onclick: (e) => { filter.src = k; for (const b of chips.children) b.setAttribute('aria-pressed', String(b === e.currentTarget)); draw(); } }, l));
@@ -556,6 +589,7 @@ async function media(c) {
     h('div', { class: 'tablewrap' }, h('table', {},
       h('thead', {}, h('tr', {}, h('th', { class: 'pick' }, ''), h('th', {}, 'Journalist'), h('th', {}, 'Address'), h('th', {}, 'Role'), h('th', {}, 'Fit'), h('th', {}, 'Why'))),
       tbody)),
+    othersBox,
     c.removedTargets?.length ? h('details', { class: 'more' }, h('summary', {}, `Removed from this campaign (${c.removedTargets.length})`, h('span', { class: 'muted small' }, ' — restore anyone')),
       h('ul', { class: 'list' }, ...c.removedTargets.map((r) => h('li', { style: 'display:grid;grid-template-columns:minmax(0,1fr) auto;gap:12px;align-items:center' },
         h('span', {}, r.name, h('span', { class: 'small muted' }, ` · ${r.outlet} · ${r.email}`)),
@@ -573,7 +607,7 @@ async function openAddJournalists(c) {
   const tagSel = h('select', { 'aria-label': 'Tag' });
   const coverSel = h('select', { 'aria-label': 'Topic' });
   const srcSel = h('select', { 'aria-label': 'Source' }, ...[['', 'Everyone'], ['list', 'Your list'], ['research', 'Researched'], ['apollo', 'Apollo.io']].map(([v, l]) => h('option', { value: v }, l)));
-  const q = h('input', { type: 'search', placeholder: 'Search name, outlet, beat, tag…', 'aria-label': 'Search journalists' });
+  const q = h('input', { type: 'search', placeholder: 'Search by name, outlet, country, beat or tag', 'aria-label': 'Search journalists' });
   const selectAll = h('button', { class: 'link', type: 'button' }, 'Select all shown');
   let rows = [];
   const upd = () => { addBtn.disabled = !st.picked.size; addBtn.replaceChildren(st.picked.size ? `Add ${st.picked.size} selected` : 'Add selected'); };
@@ -583,19 +617,20 @@ async function openAddJournalists(c) {
     const r = await api(`people?${p}`);
     tagOptions(tagSel, r.facets.tags, st.tag);
     coverOptions(coverSel, r.facets.covers, st.cover);
-    rows = r.rows.filter((x) => x.email);
-    list.replaceChildren(...(rows.length ? rows.map((x) => {
-      const box = h('input', { type: 'checkbox', checked: x.inCampaign || st.picked.has(x.id), disabled: x.inCampaign, onchange: (e) => { e.target.checked ? st.picked.add(x.id) : st.picked.delete(x.id); upd(); } });
+    rows = r.rows;
+    list.replaceChildren(...[...(rows.length ? rows.map((x) => {
+      const box = h('input', { type: 'checkbox', checked: x.inCampaign || st.picked.has(x.id), disabled: x.inCampaign || !x.email, onchange: (e) => { e.target.checked ? st.picked.add(x.id) : st.picked.delete(x.id); upd(); } });
       const s = x.sources.includes('list') ? SRC.list : x.sources.includes('apollo') ? SRC.apollo : SRC.research;
       return h('li', {}, h('label', { class: 'pickrow' }, box,
         h('span', {}, h('span', { class: 'o' }, x.name), h('span', { class: 'small muted' }, ` · ${x.outlet}`), ' ', h('button', { class: 'link', type: 'button', onclick: (e) => { e.preventDefault(); e.stopPropagation(); openCard(x.id, c.id); } }, 'Details'),
           x.outletLine ? h('div', { class: 'small muted' }, shortLine(x.outletLine)) : null,
           h('div', { class: 'src' }, badge(s[0], s[1]), ...x.tags.map((t) => badge(t)), x.latestArticle ? h('span', { class: 'small muted' }, ` “${x.latestArticle.title.slice(0, 60)}”`) : null)),
-        h('span', { class: 'small muted' }, x.inCampaign ? 'In campaign' : x.fit >= 6 ? 'Strong fit' : x.fit >= 3 ? 'Good fit' : x.fit > 0 ? 'Possible' : 'Off topic')));
-    }) : [h('li', { class: 'muted small', style: 'padding:16px' }, 'No journalists with an address match. Import your list or run research from the Media list.')]));
+        h('span', { class: 'small muted' }, x.inCampaign ? 'In campaign' : !x.email ? 'No address yet' : x.fit >= 6 ? 'Strong fit' : x.fit >= 3 ? 'Good fit' : x.fit > 0 ? 'Possible' : 'Off topic')));
+    }) : [h('li', { class: 'muted small', style: 'padding:16px' }, 'Nobody in your database matches. Try a broader search, import your list, or run research from the Media list.')]),
+      r.hidden ? h('li', { class: 'small muted', style: 'padding:12px 8px' }, `${r.hidden} more researched journalists match but are outside your plan’s view. `, h('a', { href: '#/plans', onclick: closeOverlay }, 'See plans →')) : null].filter(Boolean));
     upd();
   }
-  selectAll.addEventListener('click', () => { for (const x of rows) if (!x.inCampaign) st.picked.add(x.id); load(); });
+  selectAll.addEventListener('click', () => { for (const x of rows) if (!x.inCampaign && x.email) st.picked.add(x.id); load(); });
   let t = null;
   q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { st.q = q.value; load(); }, 200); });
   srcSel.addEventListener('change', () => { st.source = srcSel.value; load(); });

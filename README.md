@@ -165,7 +165,10 @@ outlet.
 - Untick anyone to remove them; they stay under "Removed" so you can restore them.
 - Change a role (Exclusive, Backup, Embargo, Launch) with its dropdown. There is always exactly one exclusive.
 - Press **Add journalists** (`A`) to pick from your whole database, ranked by fit for this campaign. Filter by
-  tag to add a whole group.
+  tag to add a whole group. People without an address are listed but greyed out until one is found.
+- The search box above the list searches this campaign **and** your whole database, by meaning (France finds
+  French). Matches not yet in the campaign appear under "Also in your database", each with an **Add** button,
+  plus **Add all**.
 
 Your choices are kept when research finishes or recommendations are refreshed. The list locks once the campaign
 launches.
