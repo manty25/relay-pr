@@ -7,12 +7,17 @@ import fs from 'node:fs';
 import { campaignDir, writeText, audit, readJson, writeJson } from '../store.js';
 import { hash, isEmail } from '../util.js';
 
+const KEYS = { resend: 'RESEND_API_KEY', postmark: 'POSTMARK_TOKEN', sendgrid: 'SENDGRID_API_KEY' };
+// Which provider keys are set (names only, never values).
+export const emailKeysPresent = () => Object.entries(KEYS).filter(([, k]) => process.env[k]).map(([p]) => p);
+
+// RELAY_EMAIL_PROVIDER picks the provider; without it, a single provider key is enough on its own.
 export function emailProvider() {
   const p = (process.env.RELAY_EMAIL_PROVIDER || '').toLowerCase();
-  if (p === 'resend' && process.env.RESEND_API_KEY) return 'resend';
-  if (p === 'postmark' && process.env.POSTMARK_TOKEN) return 'postmark';
-  if (p === 'sendgrid' && process.env.SENDGRID_API_KEY) return 'sendgrid';
-  return 'outbox';
+  if (p === 'outbox') return 'outbox';
+  if (KEYS[p]) return process.env[KEYS[p]] ? p : 'outbox';
+  const present = emailKeysPresent();
+  return present.length === 1 ? present[0] : 'outbox';
 }
 
 function eml({ from, to, subject, text, headers = {} }) {
@@ -95,7 +100,7 @@ export async function sendTestEmail(campaign, to) {
   const from = String(b.sender.email || '').trim().toLowerCase();
   const at = new Date().toISOString();
   const fail = (error, hint = '') => ({ ok: false, provider, from, to, at, error, hint });
-  if (provider === 'outbox') return fail('No email service is connected.', 'Set RELAY_EMAIL_PROVIDER=resend and RESEND_API_KEY in your Render Environment tab, then redeploy.');
+  if (provider === 'outbox') return fail('No email service is connected.', 'Add RESEND_API_KEY in your Render Environment tab (RELAY_EMAIL_PROVIDER=resend is optional), then redeploy.');
   if (!isEmail(from)) return fail('Set a sender email first.');
   if (!isEmail(to)) return fail('Enter the address to send the test to.');
   const pitch = (campaign.assets?.pitches || [])[0];
@@ -121,7 +126,13 @@ export async function checkEmailConnection({ fetchImpl = globalThis.fetch } = {}
   const at = new Date().toISOString();
   if (provider === 'outbox') {
     const named = (process.env.RELAY_EMAIL_PROVIDER || '').toLowerCase();
-    return { provider, ok: false, at, error: named ? `RELAY_EMAIL_PROVIDER is "${named}" but its API key is not set.` : 'No email service is connected (RELAY_EMAIL_PROVIDER is not set).' };
+    const present = emailKeysPresent();
+    const error = named === 'outbox' ? 'RELAY_EMAIL_PROVIDER is set to "outbox", so email is switched off.'
+      : KEYS[named] ? `RELAY_EMAIL_PROVIDER is "${named}" but ${KEYS[named]} is not set.`
+      : named ? `RELAY_EMAIL_PROVIDER "${named}" isn't one of resend, postmark or sendgrid.`
+      : present.length > 1 ? `Keys for ${present.join(' and ')} are both set: set RELAY_EMAIL_PROVIDER to choose one.`
+      : 'No email key is set: add RESEND_API_KEY (or POSTMARK_TOKEN / SENDGRID_API_KEY) in the Render Environment tab.';
+    return { provider, ok: false, at, keysPresent: present, error };
   }
   const get = async (url, headers) => {
     const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 10000);

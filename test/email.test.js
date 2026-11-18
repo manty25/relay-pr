@@ -20,7 +20,7 @@ test('without a provider the test email explains how to connect one', async () =
   const c = await relay.createCampaign(relay.SAMPLE_BRIEF, { now: FIXED_NOW });
   const r = await sendTestEmail(c, 'me@company.com');
   assert.equal(r.ok, false);
-  assert.match(r.hint, /RELAY_EMAIL_PROVIDER=resend/);
+  assert.match(r.hint, /RESEND_API_KEY/);
 });
 
 test('a test email goes through Resend from the campaign sender, and unlocks the live check', async () => {
@@ -62,7 +62,11 @@ test('the test result cannot be set through a campaign patch', async () => {
 
 test('connection check: key accepted and verified domains listed, nothing sent', async () => {
   const { checkEmailConnection } = await import('../src/distribute/email.js');
-  assert.match((await checkEmailConnection()).error, /not set/);
+  assert.match((await checkEmailConnection()).error, /No email key/);
+  process.env.RESEND_API_KEY = 're_only';
+  const { emailProvider } = await import('../src/distribute/email.js');
+  assert.equal(emailProvider(), 'resend', 'a single key is enough');
+  delete process.env.RESEND_API_KEY;
   process.env.RELAY_EMAIL_PROVIDER = 'resend'; process.env.RESEND_API_KEY = 're_test';
   try {
     const ok = await checkEmailConnection({ fetchImpl: async (url, init) => { assert.equal(String(url), 'https://api.resend.com/domains'); assert.equal(init.method, undefined); return new Response(JSON.stringify({ data: [{ name: 'lumora.com', status: 'verified' }, { name: 'news.lumora.com', status: 'pending' }] })); } });
