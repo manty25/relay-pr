@@ -215,7 +215,7 @@ async function viewCampaign(id, tab = 'overview') {
   const body = h('div', {});
   render(
     h('div', { class: 'mast' },
-      h('div', {}, h('div', { class: 'eyebrow' }, `${c.analysis.topic.label} · ${c.brief.org}`), h('h1', {}, c.name)),
+      h('div', {}, h('div', { class: 'eyebrow' }, `${c.analysis.sector ? `${c.analysis.sector[0].toUpperCase()}${c.analysis.sector.slice(1)} · ` : ''}${c.analysis.topic.label} · ${c.brief.org}`), h('h1', {}, c.name)),
       h('div', { class: 'badges' }, badge(label, kind), badge(`${c.qa.passed} of ${c.qa.total} checks`, c.qa.errors ? 'err' : 'ok'), c.mode === 'live' ? badge('Live', 'err') : badge('Test mode'), badge(c.writer?.name === 'claude' ? 'Written by Claude' : 'Offline writer'))),
     h('nav', { class: 'tabs', 'aria-label': 'Campaign sections' }, ...TABS.map(([k, l], i) => h('a', { href: `#/c/${c.id}/${k}`, 'aria-current': k === tab ? 'page' : null }, l, kbd(String(i + 1))))),
     body);
@@ -573,8 +573,14 @@ async function media(c) {
   const chipSet = [['', `All ${c.targets.length}`], ...Object.entries(bySrc).map(([k, n]) => [k, `${(SRC[k] || [k])[0]} ${n}`])];
   for (const [k, l] of chipSet) chips.append(h('button', { type: 'button', class: 'chip', 'aria-pressed': String(filter.src === k), onclick: (e) => { filter.src = k; for (const b of chips.children) b.setAttribute('aria-pressed', String(b === e.currentTarget)); draw(); } }, l));
   draw();
+  const dq = c.discovery?.query || {};
+  const searched = (dq.terms || []).slice(0, 4);
   return h('div', { class: 'stack' },
     researchPanel(c),
+    searched.length ? h('p', { class: 'small muted' },
+      c.analysis.sector ? `Sector: ${c.analysis.sector}. ` : '',
+      `Searched recent news for ${searched.map((t) => `“${t}”`).join(', ')}.`,
+      dq.trade?.length ? ` Trade press with recent coverage: ${dq.trade.map((o) => o.name).join(', ')}.` : '') : null,
     locked ? h('div', { class: 'banner' }, 'This campaign has launched, so its media list is locked.') : null,
     h('div', { class: 'spread' },
       h('div', {},

@@ -157,6 +157,23 @@ journalists, to open their card:
 Tables also show each person's outlet type and their latest piece ("Wrote 3 days ago: …"). After research,
 outlet summaries and recent articles for the media list are filled in automatically in the background.
 
+### Any sector
+
+Every new campaign works out which beat its story belongs to, whether that's legal services, defense, consumer goods,
+veterinary care or anything else:
+
+- **With Claude** (an `ANTHROPIC_API_KEY` is set), Relay asks Claude for the sector, the phrases reporters on that
+  beat use, and the trade publications that cover it. Each publication is checked against live Google News before
+  it's used: only ones with recent coverage of the beat are kept, ranked as trade press, and researched for
+  journalists. A wrong guess costs nothing.
+- **Without Claude**, Relay's own sector vocabulary (legal, insurance, defense, consumer goods, logistics,
+  manufacturing, agriculture, construction, plus the tech, health, finance and consumer beats) leads the search,
+  and the release's own distinctive words do the rest.
+
+A non-tech product (a law firm's new service, a shampoo bar) is treated as business and trade news, not tech news.
+The Media list shows the sector, what was searched and which trade publications were confirmed. Journalists found
+are saved under that beat, so the next campaign in the same sector starts with them.
+
 ### Choosing journalists for a campaign
 
 A campaign's **Media list** starts with Relay's recommendations, from both your list and research, one per

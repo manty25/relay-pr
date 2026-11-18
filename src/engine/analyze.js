@@ -1,5 +1,5 @@
 // Topic classification, beat inference and news-value scoring.
-import { TOPICS, TOPIC_BY_ID, BEAT_HINTS } from '../knowledge/topics.js';
+import { TOPICS, TOPIC_BY_ID, BEAT_HINTS, TECH_BEATS } from '../knowledge/topics.js';
 import { extractNumbers, SUPERLATIVES } from './brief.js';
 import { unique, clamp } from '../util.js';
 
@@ -31,7 +31,10 @@ export function classify(brief) {
 
   // Specific beats come from the vocabulary of the story; generic ones from the topic playbook.
   const specific = Object.entries(BEAT_HINTS).filter(([, kws]) => kws.some((k) => has(text, k))).map(([b]) => b);
-  const beats = new Set([...specific, ...topic.beats]);
+  // A product launch by a law firm or insurer is trade/business news, not tech news.
+  const sectorOnly = specific.length && !specific.some((b) => TECH_BEATS.has(b) || ['transport', 'energy', 'climate', 'health', 'finance'].includes(b)) && !has(text, 'app') && !has(text, 'software') && !has(text, 'platform');
+  const generic = sectorOnly ? ['business', ...topic.beats.filter((b) => !['tech', 'consumer-tech'].includes(b))] : topic.beats;
+  const beats = new Set([...specific, ...generic]);
   return {
     topic: { id: topic.id, label: topic.label },
     confidence,

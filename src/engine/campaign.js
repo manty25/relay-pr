@@ -13,7 +13,7 @@ import { currentPlan } from '../plans.js';
 import { personById, asContact, fitFor, personKeyOf } from './people.js';
 import { outletFacts, enrichCampaignProfiles } from './profiles.js';
 import { writeOffline, quoteParagraph } from '../generate/offline.js';
-import { llmAvailable, writeWithClaude, repairWithClaude, MODEL } from '../generate/claude.js';
+import { llmAvailable, writeWithClaude, repairWithClaude, inferCoverage, MODEL } from '../generate/claude.js';
 import { pitchFor, followUpFor, releaseText, wirePackage, newsroomHtml, defaultOpener } from '../generate/compose.js';
 import { TK } from './brief.js';
 import { sendEmail } from '../distribute/email.js';
@@ -42,6 +42,8 @@ export async function createCampaign(input, opts = {}) {
   const brief = normalizeBrief(input);
   const factSheet = buildFactSheet(brief);
   const cls = classify(brief);
+  const hint = await coverageHint(brief, cls, opts);
+  if (hint) cls.sector = hint.sector;
   const nw = newsworthiness(brief, cls);
   const choice = chooseChannels(brief, cls, nw);
   const flags = { exclusive: choice.exclusive, embargo: choice.embargo, mode: choice.mode };
@@ -55,7 +57,7 @@ export async function createCampaign(input, opts = {}) {
     mode: opts.mode === 'live' ? 'live' : 'test',
     status: 'draft',
     brief,
-    analysis: { topic: cls.topic, confidence: cls.confidence, alternatives: cls.alternatives, beats: cls.beats, specificBeats: cls.specificBeats, regulated: cls.regulated, crisis: cls.crisis, matched: cls.matched, newsworthiness: nw },
+    analysis: { sector: hint?.sector || null, tradeOutlets: hint?.outlets || [], topic: cls.topic, confidence: cls.confidence, alternatives: cls.alternatives, beats: cls.beats, specificBeats: cls.specificBeats, regulated: cls.regulated, crisis: cls.crisis, matched: cls.matched, newsworthiness: nw },
     plan: { channels: choice.channels, notes: [...choice.notes, ...timeline.notes], flags, launchAt: launch.toISOString(), timeline: timeline.steps },
     compliance: {},
     events: [],
@@ -63,8 +65,8 @@ export async function createCampaign(input, opts = {}) {
     timings: {},
   };
 
-  const disc = opts.discover === false ? { ok: false, reason: 'discovery disabled', articles: [], query: topicQuery(brief, cls) } : await discoverCoverage(brief, cls, opts);
-  c.discovery = { ok: disc.ok, reason: disc.reason, query: disc.query || topicQuery(brief, cls), articleCount: disc.articles.length, sample: disc.articles.slice(0, 80) };
+  const disc = opts.discover === false ? { ok: false, reason: 'discovery disabled', articles: [], query: topicQuery(brief, cls, hint) } : await discoverCoverage(brief, cls, { ...opts, hint });
+  c.discovery = { ok: disc.ok, reason: disc.reason, query: disc.query || topicQuery(brief, cls, hint), articleCount: disc.articles.length, sample: disc.articles.slice(0, 80) };
   retarget(c, disc);
   await generateAssets(c, { useClaude: opts.useClaude });
   c.status = 'ready';
@@ -72,6 +74,26 @@ export async function createCampaign(input, opts = {}) {
   saveCampaign(c);
   audit({ campaignId: c.id, action: 'created', mode: c.mode, writer: c.writer?.name });
   return c;
+}
+
+// Any sector: Claude names the beat, the phrases its reporters use and its trade publications (verified against
+// live news in discovery). Without Claude, Relay's own sector vocabulary and the release's own words are used.
+async function coverageHint(brief, cls, opts) {
+  if (opts.coverageHint) return applyHint(cls, opts.coverageHint) && opts.coverageHint;
+  if (opts.useClaude === false || opts.discover === false || !llmAvailable()) return null;
+  try {
+    const hint = await Promise.race([inferCoverage(brief), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000))]);
+    applyHint(cls, hint);
+    return hint;
+  } catch { return null; }
+}
+
+export function applyHint(cls, hint) {
+  if (!hint?.beat) return cls;
+  cls.specificBeats = [...new Set([hint.beat, ...(cls.specificBeats || [])])];
+  const drop = hint.techProduct ? [] : ['tech', 'consumer-tech'];
+  cls.beats = [...new Set([...cls.specificBeats, 'business', ...cls.beats.filter((b) => !drop.includes(b))])];
+  return cls;
 }
 
 function retarget(c, disc) {

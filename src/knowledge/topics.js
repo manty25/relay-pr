@@ -233,4 +233,27 @@ export const BEAT_HINTS = {
   gaming: ['game', 'gaming', 'esports'],
   sports: ['sport', 'football', 'soccer', 'basketball', 'athlete', 'fitness'],
   local: ['local residents', 'neighborhood', 'county', 'hometown', 'city council'],
+  legal: ['legal services', 'law firm', 'law firms', 'lawyer', 'lawyers', 'attorney', 'attorneys', 'solicitor', 'solicitors', 'barrister', 'litigation', 'legaltech', 'legal tech', 'paralegal', 'general counsel', 'in-house counsel', 'legal advice', 'legal aid', 'law practice', 'employment law', 'contract review'],
+  insurance: ['insurance', 'insurer', 'insurers', 'insurtech', 'underwriting', 'policyholder', 'reinsurance'],
+  manufacturing: ['manufacturing', 'manufacturer', 'factory', 'factories', 'industrial', 'supply chain', 'production line'],
+  logistics: ['logistics', 'shipping', 'freight', 'warehouse', 'warehousing', 'last-mile', 'fulfillment', 'fulfilment', 'trucking'],
+  agriculture: ['agriculture', 'agricultural', 'farm', 'farmers', 'farming', 'agtech', 'crop', 'crops', 'livestock'],
+  defense: ['defense', 'defence', 'military', 'armed forces', 'pentagon', 'ministry of defence', 'nato', 'aerospace and defense', 'munitions', 'warfighter', 'navy', 'army', 'air force'],
+  'consumer-goods': ['consumer goods', 'cpg', 'fmcg', 'packaged goods', 'household products', 'personal care', 'beauty', 'skincare', 'cosmetics', 'apparel', 'grocery'],
+  construction: ['construction', 'contractor', 'contractors', 'builder', 'builders', 'infrastructure', 'architecture', 'proptech'],
 };
+
+// Sector words that should lead a coverage search when they appear in a release (most specific first).
+export const SECTOR_PHRASES = {
+  legal: ['legal services', 'law firm', 'legal tech', 'legaltech', 'litigation', 'lawyers', 'attorneys', 'solicitors', 'legal'],
+  insurance: ['insurtech', 'insurance'],
+  manufacturing: ['manufacturing', 'supply chain'],
+  logistics: ['logistics', 'freight', 'warehousing'],
+  agriculture: ['agtech', 'agriculture', 'farming'],
+  construction: ['construction', 'proptech'],
+  defense: ['defense industry', 'defence industry', 'defense', 'defence', 'military'],
+  'consumer-goods': ['consumer goods', 'cpg', 'fmcg', 'packaged goods', 'beauty', 'personal care'],
+};
+
+// Beats where a "tech" default makes sense; for other sectors a product launch is business/trade news.
+export const TECH_BEATS = new Set(['ai', 'cybersecurity', 'enterprise-software', 'consumer-tech', 'gaming', 'crypto']);

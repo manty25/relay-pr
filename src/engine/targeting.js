@@ -71,9 +71,10 @@ function discoveredOutlets(articlesByDomain, known, { region, place }) {
     const recent = arts.filter((a) => (!a.date || now - new Date(a.date).getTime() <= maxAgeDays(place) * 86400000) && aboutPlace(a, place));
     if (!recent.length) continue;
     const name = recent.find((a) => a.outlet)?.outlet || domain;
-    out.push({ name, domain, tier: 3, reach: 's', region: 'global', beats: [], latest: recent.map((a) => a.date || '').sort().pop() });
+    // A specialist publication confirmed to cover this beat right now ranks as trade press (tier 2).
+    out.push({ name, domain, tier: recent.some((a) => a.trade) ? 2 : 3, reach: 's', region: 'global', beats: [], trade: recent.some((a) => a.trade), latest: recent.map((a) => a.date || '').sort().pop() });
   }
-  return out.sort((a, b) => b.latest.localeCompare(a.latest)).slice(0, MAX_DISCOVERED);
+  return out.sort((a, b) => (b.trade - a.trade) || b.latest.localeCompare(a.latest)).slice(0, MAX_DISCOVERED);
 }
 
 export function buildTargets({ brief, cls, nw, flags, discovery, contacts = [], includeDemo = true, campaignId = '', suppression, history }) {

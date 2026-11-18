@@ -2,6 +2,7 @@
 //   GDELT DOC 2.0 API (global news index, updated every 15 minutes) and Google News RSS search.
 // Both fail soft: on network errors Relay continues with the static outlet database.
 
+import { SECTOR_PHRASES, BEAT_HINTS } from '../knowledge/topics.js';
 const UA = 'RelayPR/1.0 (+media-discovery)';
 
 async function getText(url, timeoutMs = 7000, fetchImpl = globalThis.fetch) {
@@ -68,30 +69,57 @@ export async function googleNewsSearch(query, { region = 'US', lang = 'en', fetc
 const LOCAL_TOPICS = new Set(['local', 'event', 'nonprofit']);
 export const isLocalStory = (brief, cls) => Boolean(brief.city) && (LOCAL_TOPICS.has(cls.topic?.id) || (cls.specificBeats || []).includes('local'));
 
-export function topicQuery(brief, cls) {
-  const stop = new Set('the a an and or of for to in on with by at from as is are its it this that new today launches launched announces announced unveils introduces will has have their our we us opens open'.split(' '));
+const STOP = new Set(('the a an and or of for to in on with by at from as is are its it this that new today launches launched announces announced unveils introduces '
+  + 'will has have their our we us opens open services service small large businesses business company companies customers clients people offers offering offer '
+  + 'available first more help helps now based leading provider providers solution solutions within hours days week weeks year years across world global launch '
+  + 'introducing announce introduce support supports free fixed wins win won deliver delivers').split(' '));
+
+export function topicQuery(brief, cls, hint = null) {
   const skip = new Set([...brief.org.toLowerCase().split(/\s+/), ...String(brief.city || '').toLowerCase().split(/\s+/)]);
+  const text = ` ${[brief.news, ...(brief.facts || [])].join(' ').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').replace(/\s+/g, ' ')} `;
+  // 1. Sector phrases (e.g. "legal services", "law firm") lead: they are what the right reporters write about.
+  // Claude's phrases for the beat come first when present; Relay's own vocabulary follows.
+  const sector = (hint?.phrases || []).map((p) => p.toLowerCase());
+  for (const b of [...(cls.specificBeats || [])].sort((x, y) => (SECTOR_PHRASES[y] ? 1 : 0) - (SECTOR_PHRASES[x] ? 1 : 0))) for (const p of SECTOR_PHRASES[b] || (BEAT_HINTS[b] || []).filter((k) => k.length > 3)) if (text.includes(` ${p} `) && !sector.some((x) => x.includes(p) || p.includes(x))) sector.push(p);
+  // 2. Then the most distinctive words of the headline.
   const words = brief.news.toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/)
-    .filter((w) => w.length > 3 && !stop.has(w) && !skip.has(w) && !/^\d/.test(w));
+    .filter((w) => w.length > 3 && !STOP.has(w) && !skip.has(w) && !/^\d/.test(w) && !sector.some((p) => p.split(' ').includes(w)));
   const freq = {};
   for (const w of words) freq[w] = (freq[w] || 0) + 1;
-  const terms = Object.keys(freq).sort((a, b) => freq[b] - freq[a]).slice(0, 4);
-  const gdelt = terms.length ? `(${terms.map((t) => `"${t}"`).join(' OR ')})` : cls.beats[0];
+  const distinct = Object.keys(freq).sort((a, b) => freq[b] - freq[a]);
+  const terms = [...sector.slice(0, 3), ...distinct].slice(0, 4);
+  const q = (t) => `"${t}"`;
+  const gdelt = sector.length ? `(${sector.slice(0, 3).map(q).join(' OR ')})` : terms.length ? `(${terms.map(q).join(' OR ')})` : cls.beats[0];
+  const news = sector.length ? [q(sector[0]), ...distinct.slice(0, 1)].join(' ') : terms.slice(0, 3).join(' ');
   // Local stories are only news to local press: search within the place, and remember it for filtering.
-  if (isLocalStory(brief, cls)) return { terms, local: brief.city, gdelt: `${gdelt} "${brief.city}"`, news: `${terms.slice(0, 2).join(' ')} "${brief.city}"` };
-  return { terms, gdelt, news: terms.slice(0, 3).join(' ') };
+  if (isLocalStory(brief, cls)) return { terms, local: brief.city, gdelt: `${gdelt} "${brief.city}"`, news: `${sector[0] ? q(sector[0]) : terms.slice(0, 2).join(' ')} "${brief.city}"` };
+  const extra = (hint?.phrases || []).slice(1, 3).map((p) => q(p.toLowerCase()));
+  return { terms, gdelt, news, extra };
 }
 
 export async function discoverCoverage(brief, cls, opts = {}) {
   if (process.env.RELAY_OFFLINE === '1' || opts.offline) return { ok: false, reason: 'offline mode', articles: [], query: null };
-  const q = topicQuery(brief, cls);
+  const q = topicQuery(brief, cls, opts.hint);
+  const gl = brief.region === 'uk' ? 'GB' : 'US';
+  const gn = (query) => googleNewsSearch(query, { region: gl, fetchImpl: opts.fetchImpl });
+  // Trade publications named for this beat are checked against live news: only ones with recent beat coverage
+  // count, and those articles feed research like any other.
+  const trade = (opts.hint?.outlets || []).slice(0, 8);
+  const beatWords = (opts.hint?.phrases || []).slice(0, 2).map((p) => `"${p}"`).join(' OR ');
   const results = await Promise.allSettled([
     gdeltSearch(q.gdelt, opts),
-    googleNewsSearch(q.news, { region: brief.region === 'uk' ? 'GB' : 'US', fetchImpl: opts.fetchImpl }),
+    gn(q.news),
+    ...(q.extra || []).map(gn),
+    ...trade.map((o) => gn(`site:${o.domain}${beatWords ? ` (${beatWords})` : ''}`).then((arts) => arts
+      .filter((a) => (a.domain || '').replace(/^www\./, '').endsWith(o.domain))
+      .map((a) => ({ ...a, trade: true, outlet: a.outlet || o.name })))),
   ]);
-  const articles = results.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
-  const errors = results.filter((r) => r.status === 'rejected').map((r) => String(r.reason?.message || r.reason));
-  return { ok: articles.length > 0, reason: errors.join('; ') || (articles.length ? '' : 'no results'), articles, query: q };
+  const seen = new Set();
+  // Specialist-publication coverage first, so it survives the sample cut and research reads it first.
+  const articles = results.flatMap((r) => (r.status === 'fulfilled' ? r.value : [])).filter((a) => { const k = a.url || a.title; if (seen.has(k)) return false; seen.add(k); return true; }).sort((a, b) => (b.trade ? 1 : 0) - (a.trade ? 1 : 0));
+  const errors = results.slice(0, 2).filter((r) => r.status === 'rejected').map((r) => String(r.reason?.message || r.reason));
+  const verified = trade.filter((o) => articles.some((a) => a.trade && (a.domain || '').replace(/^www\./, '').endsWith(o.domain)));
+  return { ok: articles.length > 0, reason: errors.join('; ') || (articles.length ? '' : 'no results'), articles, query: { ...q, sector: opts.hint?.sector || '', trade: verified } };
 }
 
 // Coverage monitoring: mentions of the organisation since launch.

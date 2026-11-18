@@ -147,3 +147,40 @@ ${headlines.slice(0, 12).map((x) => `- ${x}`).join('\n') || 'none'}
   const data = JSON.parse(msg.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
   return { ...data, model: msg.model || MODEL, usage: { input_tokens: msg.usage.input_tokens, output_tokens: msg.usage.output_tokens } };
 }
+
+// Coverage hint for any sector: which beat the story belongs to, the phrases reporters on that beat use, and
+// the trade publications that cover it. Discovery then checks each publication against live news before use,
+// so a wrong guess costs nothing.
+const bool = { type: 'boolean' };
+const COVERAGE_SCHEMA = obj({ sector: str, beat: str, techProduct: bool, phrases: arr(str), outlets: arr(obj({ name: str, domain: str })) });
+const COVERAGE_SYSTEM = `You help a PR tool find journalists who cover a press release's subject, in any industry.
+Return:
+- sector: the industry or subject area in 1-3 plain words (e.g. "legal services", "defense", "consumer goods").
+- beat: the same as a short lowercase slug with hyphens (e.g. "legal", "defense", "consumer-goods").
+- techProduct: true only if the thing announced is itself a software, hardware or internet product that tech reporters would cover.
+- phrases: 2-4 short search phrases (1-3 words each) that news articles on this beat use, most specific first. No company names, and no generic words like "services" or "business" on their own.
+- outlets: up to 8 real trade or specialist publications that cover this beat in the release's region, with their main website domain (e.g. {"name":"Defense News","domain":"defensenews.com"}). Only publications you are confident exist; leave it empty if unsure. No general national newspapers.`;
+
+export async function inferCoverage({ news, facts = [], audience = '', region = '' }) {
+  const stream = client().beta.messages.stream({
+    model: MODEL,
+    max_tokens: 2500,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    thinking: { type: 'adaptive' },
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: COVERAGE_SCHEMA } },
+    system: COVERAGE_SYSTEM,
+    messages: [{ role: 'user', content: `<release region="${region || 'us'}">\n<headline>${news}</headline>\n<facts>\n${facts.slice(0, 6).map((f) => `- ${f}`).join('\n')}\n</facts>\n<audience>${audience}</audience>\n</release>` }],
+  });
+  const msg = await stream.finalMessage();
+  if (msg.stop_reason === 'refusal' || msg.stop_reason === 'max_tokens') throw new Error(`Claude did not finish (${msg.stop_reason})`);
+  return cleanCoverage(JSON.parse(msg.content.filter((b) => b.type === 'text').map((b) => b.text).join('')));
+}
+
+export function cleanCoverage(d) {
+  const beat = String(d.beat || '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-|-$/g, '').slice(0, 30);
+  const phrases = (d.phrases || []).map((p) => String(p).toLowerCase().trim()).filter((p) => p && p.split(/\s+/).length <= 3).slice(0, 4);
+  const outlets = (d.outlets || []).map((o) => ({ name: String(o.name || '').slice(0, 60), domain: String(o.domain || '').toLowerCase().replace(/^https?:\/\//, '').replace(/^www\./, '').replace(/\/.*$/, '') }))
+    .filter((o) => o.name && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(o.domain)).slice(0, 8);
+  return { sector: String(d.sector || '').slice(0, 40), beat, techProduct: Boolean(d.techProduct), phrases, outlets };
+}
