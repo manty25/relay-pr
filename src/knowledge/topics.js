@@ -257,3 +257,38 @@ export const SECTOR_PHRASES = {
 
 // Beats where a "tech" default makes sense; for other sectors a product launch is business/trade news.
 export const TECH_BEATS = new Set(['ai', 'cybersecurity', 'enterprise-software', 'consumer-tech', 'gaming', 'crypto']);
+
+// Categories the daily research keeps stocked (25 US + 25 EU verified people each). Phrases are what news on the
+// beat actually says, most specific first; GDELT matches them across languages.
+export const CATEGORIES = [
+  ['ai', 'Artificial intelligence', ['artificial intelligence', 'generative AI', 'machine learning']],
+  ['cybersecurity', 'Cybersecurity', ['cybersecurity', 'ransomware', 'data breach']],
+  ['enterprise-software', 'Enterprise software', ['enterprise software', 'SaaS', 'cloud computing']],
+  ['consumer-tech', 'Consumer tech', ['smartphones', 'consumer electronics', 'gadgets']],
+  ['startups', 'Startups and venture capital', ['startups', 'venture capital', 'funding round']],
+  ['finance', 'Finance and fintech', ['fintech', 'banking', 'payments']],
+  ['crypto', 'Crypto', ['cryptocurrency', 'blockchain', 'bitcoin']],
+  ['insurance', 'Insurance', ['insurtech', 'insurers', 'insurance industry']],
+  ['health', 'Health and medtech', ['digital health', 'medtech', 'healthcare']],
+  ['climate', 'Climate', ['climate change', 'carbon emissions', 'climate tech']],
+  ['energy', 'Energy', ['renewable energy', 'energy storage', 'power grid']],
+  ['transport', 'Transport and mobility', ['electric vehicles', 'public transport', 'mobility']],
+  ['retail', 'Retail and e-commerce', ['e-commerce', 'retailers', 'retail industry']],
+  ['consumer-goods', 'Consumer goods', ['consumer goods', 'FMCG', 'beauty industry']],
+  ['food', 'Food and drink', ['food industry', 'restaurants', 'food and drink']],
+  ['travel', 'Travel and hospitality', ['travel industry', 'airlines', 'hotels']],
+  ['marketing', 'Marketing and advertising', ['advertising industry', 'marketing', 'creator economy']],
+  ['hr-workplace', 'Work and HR', ['remote work', 'workplace', 'hiring']],
+  ['education', 'Education', ['edtech', 'higher education', 'schools']],
+  ['real-estate', 'Real estate', ['real estate', 'housing market', 'proptech']],
+  ['construction', 'Construction', ['construction industry', 'infrastructure projects', 'builders']],
+  ['manufacturing', 'Manufacturing', ['manufacturing', 'factories', 'industrial']],
+  ['logistics', 'Logistics and supply chain', ['supply chain', 'logistics', 'freight']],
+  ['agriculture', 'Agriculture', ['agriculture', 'farming', 'agtech']],
+  ['legal', 'Legal', ['law firms', 'legal tech', 'legal industry']],
+  ['defense', 'Defense', ['defense industry', 'defence industry', 'military procurement']],
+  ['gaming', 'Gaming', ['video games', 'gaming industry', 'esports']],
+  ['sports', 'Sports business', ['sports business', 'sports industry', 'athletes']],
+  ['science', 'Science', ['scientists', 'researchers found', 'scientific study']],
+  ['policy', 'Policy and regulation', ['regulation', 'lawmakers', 'policy']],
+].map(([id, label, phrases]) => ({ id, label, phrases }));

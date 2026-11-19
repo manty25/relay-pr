@@ -22,19 +22,21 @@ export const domainOf = (u) => { try { return new URL(u).hostname.replace(/^www\
 let gdeltPausedUntil = 0;
 export const resetGdeltPause = () => { gdeltPausedUntil = 0; };
 
-export async function gdeltSearch(query, { timespan = '3months', max = 75, fetchImpl } = {}) {
+export async function gdeltSearch(query, { timespan = '3months', max = 75, fetchImpl, timeoutMs } = {}) {
   if (Date.now() < gdeltPausedUntil && !fetchImpl) throw new Error('GDELT paused after a recent failure');
-  try { return await gdeltFetch(query, { timespan, max, fetchImpl }); } catch (e) { if (!fetchImpl) gdeltPausedUntil = Date.now() + 10 * 60000; throw e; }
+  try { return await gdeltFetch(query, { timespan, max, fetchImpl, timeoutMs }); } catch (e) { if (!fetchImpl) gdeltPausedUntil = Date.now() + 10 * 60000; throw e; }
 }
 
-async function gdeltFetch(query, { timespan, max, fetchImpl }) {
+async function gdeltFetch(query, { timespan, max, fetchImpl, timeoutMs = 5000 }) {
   const url = `https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=artlist&format=json&sort=datedesc&maxrecords=${max}&timespan=${timespan}`;
-  const text = await getText(url, 5000, fetchImpl);
+  const text = await getText(url, timeoutMs, fetchImpl);
+  if (/^\s*Please limit requests/i.test(text)) throw new Error('GDELT rate limit');
+  if (text && !/^\s*[{[]/.test(text)) throw new Error(`GDELT: ${text.slice(0, 120)}`);
   const json = JSON.parse(text || '{}');
   return (json.articles || []).map((a) => ({
     title: a.title, url: a.url, domain: (a.domain || domainOf(a.url)).replace(/^www\./, ''),
     date: a.seendate ? `${a.seendate.slice(0, 4)}-${a.seendate.slice(4, 6)}-${a.seendate.slice(6, 8)}` : '',
-    source: 'gdelt', language: a.language,
+    source: 'gdelt', language: a.language, country: a.sourcecountry || '',
   }));
 }
 

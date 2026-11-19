@@ -157,6 +157,38 @@ journalists, to open their card:
 Tables also show each person's outlet type and their latest piece ("Wrote 3 days ago: …"). After research,
 outlet summaries and recent articles for the media list are filled in automatically in the background.
 
+### Daily journalist research
+
+Relay keeps building a database of verified journalists by topic category, aiming for **25 in the US and 25 in
+the EU per category** (`RELAY_HARVEST_TARGET`).
+
+**What counts as verified.** A person counts for a category and region only when all of these are true:
+- they have a working address: published by their outlet or verified by Apollo, not opted out, and checked within
+  12 months;
+- the address's mail domain accepts email (an MX record);
+- they have a dated, bylined article on that category from the last 2 years, kept as evidence with its link;
+- their outlet is in the US or an EU member state. UK, Swiss and Norwegian outlets don't count as EU.
+
+**How a run works.** Each run:
+- searches GDELT (all languages, filtered by source country) and Google News US and EU editions for each category;
+- reads the bylines and author pages of the outlets found, collecting addresses and X, LinkedIn, Bluesky and
+  Mastodon profiles;
+- fills a few missing addresses with Apollo (`RELAY_HARVEST_APOLLO_MAX`, default 10 lookups a run);
+- stores everything in the directory.
+
+**Order and limits.** Categories furthest from the target go first, and each run is capped at
+`RELAY_HARVEST_MINUTES` (default 45). With Claude, EU search phrases are written in each newsroom language once
+per category.
+
+**Where it runs.** On a deployment (when `RELAY_PASSWORD` is set) it runs daily at `RELAY_HARVEST_HOUR_UTC`
+(default 02:00). The first run starts shortly after a deploy if today's hasn't run yet. Set `RELAY_HARVEST=off` to
+stop it, or `RELAY_HARVEST=on` to run it locally.
+
+**The Journalists page** shows the **Daily research** table: verified US and EU counts per category. Click a count
+to see those people with their evidence article. **Run now** starts a run, and you can add or remove categories.
+A campaign in a new sector adds its sector automatically. Standard shows the first 50 researched journalists;
+set `RELAY_PLAN=pro` to see the whole database.
+
 ### Sending email
 
 Pitches go out through Resend, Postmark or SendGrid, from the sender address you set on the campaign's Launch tab.

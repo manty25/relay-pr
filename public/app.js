@@ -725,7 +725,7 @@ async function viewJournalists() {
   knowledge ||= await api('knowledge').catch(() => ({ topics: [] }));
   const params = new URLSearchParams(location.hash.split('?')[1] || '');
   const show = params.get('show') || 'active';
-  const [data, plan, campaigns, arts] = await Promise.all([api(`people?${params}`), api('plan'), loadList(), api('people/articles').catch(() => null)]);
+  const [data, plan, campaigns, arts, hv] = await Promise.all([api(`people?${params}`), api('plan'), loadList(), api('people/articles').catch(() => null), api('harvest').catch(() => null)]);
   const pro = plan.current === 'pro';
   const sel = new Set();
   const setParam = (k, v) => { const p = new URLSearchParams(params); if (v) p.set(k, v); else p.delete(k); location.hash = `#/journalists?${p}`; };
@@ -764,7 +764,42 @@ async function viewJournalists() {
   const coverParam = params.get('cover') || params.get('topic') || '';
   const topicSel = h('select', { 'aria-label': 'Topic', onchange: (e) => { const p = new URLSearchParams(params); p.delete('topic'); if (e.target.value) p.set('cover', e.target.value); else p.delete('cover'); location.hash = `#/journalists?${p}`; } });
   coverOptions(topicSel, data.facets.covers, coverParam);
-  const filtered = ['q', 'tag', 'cover', 'topic', 'source', 'show'].some((k) => params.get(k));
+  const filtered = ['q', 'tag', 'cover', 'topic', 'source', 'show', 'zone', 'verified'].some((k) => params.get(k));
+  const catLabel = (id) => hv?.coverage.rows.find((r) => r.id === id)?.label || coverLabel(id);
+  const ZONE = { us: 'US', eu: 'EU' };
+
+  // Daily research: verified people per category and region, against the target.
+  const research = hv ? (() => {
+    const cov = hv.coverage, goal = cov.target;
+    const cell = (r, z) => {
+      const n = r[z], pct = Math.min(100, Math.round((n / goal) * 100));
+      return h('td', {}, h('a', { href: `#/journalists?zone=${z}&verified=${encodeURIComponent(r.id)}`, class: 'covcell', title: `Show the ${n} verified ${ZONE[z]} journalists for ${r.label}` },
+        h('span', { class: `covn${n >= goal ? ' i-ok' : ''}` }, `${n}`, h('span', { class: 'muted' }, ` / ${goal}`)),
+        h('span', { class: 'covbar', 'aria-hidden': 'true' }, h('span', { style: `width:${pct}%` }))),
+        r[`${z}Candidates`] ? h('div', { class: 'small muted' }, `+${r[`${z}Candidates`]} not yet verified`) : null);
+    };
+    const addInput = h('input', { type: 'text', placeholder: 'Add a category, e.g. Veterinary care', 'aria-label': 'New research category' });
+    const addCat = async () => { if (!addInput.value.trim()) return addInput.focus(); await api('harvest/categories', { method: 'POST', body: { add: { label: addInput.value.trim() } } }); toast(`Added ${addInput.value.trim()} — the next daily run researches it`); viewJournalists(); };
+    addInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') addCat(); });
+    const last = hv.runs[0];
+    const statusLine = hv.running ? `Researching now${hv.running.of ? ` — ${hv.running.done || 0} of ${hv.running.of} category searches done` : ''}…`
+      : hv.enabled ? `Runs daily at ${String(hv.hourUtc).padStart(2, '0')}:00 UTC · next ${fmt.dt(hv.nextRunAt)}` : 'Daily runs are off here (they run on your Render deployment). You can still run one now.';
+    return h('details', { class: 'more research', open: params.get('verified') ? null : true },
+      h('summary', {}, `Daily research — ${cov.complete} of ${cov.rows.length} categories at ${goal} US + ${goal} EU`, h('span', { class: 'muted small' }, ` — verified: a working address and a bylined article on the topic in the last 2 years`)),
+      h('div', { class: 'stack', style: 'margin-top:12px;gap:12px' },
+        h('div', { class: 'spread', style: 'align-items:center;gap:12px' },
+          h('span', { class: 'small' }, statusLine, last ? h('span', { class: 'muted' }, ` · last run ${fmt.rel(last.startedAt)}${last.interrupted ? ' (interrupted by a restart)' : `: +${last.verifiedGained} verified`}`) : ''),
+          h('div', { class: 'row', style: 'gap:8px' },
+            h('div', { style: 'width:260px' }, addInput), h('button', { class: 'btn ghost sm', type: 'button', onclick: addCat }, 'Add'),
+            h('button', { class: 'btn sm', type: 'button', disabled: Boolean(hv.running), onclick: (e) => busy(e.currentTarget, 'Starting…', () => api('harvest/run', { method: 'POST', body: {} })).then(() => { toast('Research started — this page updates as it goes'); setTimeout(viewJournalists, 1500); }) }, hv.running ? 'Running…' : 'Run now'))),
+        h('div', { class: 'tablewrap' }, h('table', { class: 'covtable' },
+          h('thead', {}, h('tr', {}, h('th', {}, 'Category'), h('th', {}, 'US verified'), h('th', {}, 'EU verified'), h('th', {}, ''))),
+          h('tbody', {}, ...[...cov.rows].sort((a, b) => a.label.localeCompare(b.label)).map((r) => h('tr', {},
+            h('td', {}, h('div', {}, r.label, r.complete ? h('span', { class: 'i-ok' }, ' ✓') : null), h('div', { class: 'small muted' }, r.phrases.join(' · '), r.auto ? ' · added by a campaign' : '')),
+            cell(r, 'us'), cell(r, 'eu'),
+            h('td', {}, h('button', { class: 'link', type: 'button', title: `Stop researching ${r.label}`, onclick: async () => { if (!confirm(`Stop researching ${r.label}? People already found stay in your database.`)) return; await api('harvest/categories', { method: 'POST', body: { remove: r.id } }); viewJournalists(); } }, 'Remove')))))))));
+  })() : null;
+  if (hv?.running) setTimeout(() => { if (state.view === 'journalists' && !document.querySelector('.bulk:not([hidden])')) viewJournalists(); }, 20000);
 
   // Bulk actions for checked rows
   const bulk = h('div', { class: 'bulk', hidden: true });
@@ -795,6 +830,8 @@ async function viewJournalists() {
         h('a', { class: 'btn ghost sm', href: '/api/people/export.csv?source=list', download: 'my-journalists.csv' }, 'Export your list'),
         pro ? h('a', { class: 'btn ghost sm', href: '/api/people/export.csv', download: 'all-journalists.csv' }, 'Export everyone') : h('a', { class: 'lock', href: '#/plans' }, '🔒 Export researched: Pro'))),
     h('div', { class: 'statrow' }, fig('Journalists', data.stats.total, 'you can pitch'), fig('From your list', data.stats.list, 'uploaded by you'), fig('Researched', data.stats.research + data.stats.apollo, `incl. ${data.stats.apollo} via Apollo.io`), fig('Need re-checking', data.stats.stale, 'verified over 12 months ago')),
+    research,
+    params.get('verified') || params.get('zone') ? h('div', { class: 'banner', style: 'margin-top:16px' }, `Showing verified ${ZONE[params.get('zone')] || ''} journalists${params.get('verified') ? ` for ${catLabel(params.get('verified'))}` : ''}: each has a working address and a bylined article on the topic in the last 2 years. `, h('a', { href: '#/journalists' }, 'Show everyone')) : null,
     importPanel,
     artBanner,
     h('div', { class: 'row', style: 'margin:22px 0 10px;gap:12px' }, h('div', { style: 'flex:1;min-width:220px' }, q), h('div', { style: 'width:190px' }, tagSel), h('div', { style: 'width:230px' }, topicSel)),
@@ -803,7 +840,7 @@ async function viewJournalists() {
     h('datalist', { id: 'tag-list' }, ...data.tags.map((t) => h('option', { value: t.tag }))),
     bulk,
     data.rows.length ? h('div', { class: 'tablewrap', style: 'margin-top:12px' }, h('table', {},
-      h('thead', {}, h('tr', {}, h('th', { class: 'pick' }, head), h('th', {}, 'Journalist'), h('th', {}, 'Address'), h('th', {}, 'Covers'), h('th', {}, 'Tags'), h('th', {}, 'Latest piece'), h('th', {}, ''))),
+      h('thead', {}, h('tr', {}, h('th', { class: 'pick' }, head), h('th', {}, 'Journalist'), h('th', {}, 'Address'), h('th', {}, params.get('verified') ? 'Evidence' : 'Covers'), h('th', {}, 'Tags'), h('th', {}, 'Latest piece'), h('th', {}, ''))),
       h('tbody', {}, ...data.rows.map((p) => {
         const s = p.sources.includes('list') ? SRC.list : p.sources.includes('apollo') ? SRC.apollo : SRC.research;
         return h('tr', {},
@@ -811,8 +848,11 @@ async function viewJournalists() {
           h('td', {}, h('button', { class: 'namebtn o', type: 'button', onclick: () => openCard(p.id) }, p.name), h('div', { class: 'small muted' }, p.outlet), p.outletLine ? h('div', { class: 'small muted' }, shortLine(p.outletLine)) : null),
           h('td', {}, p.email ? h('div', { class: 'small' }, p.email) : h('span', { class: 'small muted' }, 'No address yet'),
             h('div', { class: 'src' }, badge(s[0], s[1]), p.sources.length > 1 ? badge('+ researched', 'ok') : null, p.stale ? badge('re-check', 'warn') : null,
+              p.verifiedIn?.length ? h('span', { class: 'badge ok', title: `Verified for ${p.verifiedIn.map(catLabel).join(', ')}` }, `Verified · ${ZONE[p.zone] || ''}`) : null,
               p.emailSource && p.provider !== 'apollo' ? h('a', { href: p.emailSource, target: '_blank', rel: 'noopener' }, 'source ↗') : null)),
-          h('td', { class: 'small muted' }, [...p.topics, ...p.beats.slice(0, 3)].map(coverLabel).join(', ') || '—'),
+          h('td', { class: 'small muted' }, params.get('verified') && p.coverage?.[params.get('verified')]
+            ? [h('a', { href: p.coverage[params.get('verified')].url, target: '_blank', rel: 'noopener' }, `“${p.coverage[params.get('verified')].title.slice(0, 60)}”`), h('div', {}, fmt.rel(p.coverage[params.get('verified')].date))]
+            : [...p.topics, ...p.beats.slice(0, 3)].map(catLabel).join(', ') || '—'),
           h('td', {}, h('div', { class: 'tags' }, ...p.tags.map((t) => h('button', { class: 'badge tagchip', type: 'button', title: `Show everyone tagged ${t}`, onclick: () => setParam('tag', t) }, t)))),
           h('td', { class: 'small' }, p.latestArticle ? [p.latestArticle.url ? h('a', { href: p.latestArticle.url, target: '_blank', rel: 'noopener' }, p.latestArticle.title.slice(0, 64)) : p.latestArticle.title.slice(0, 64), p.latestArticle.date ? h('div', { class: 'muted' }, fmt.rel(p.latestArticle.date)) : null] : arts?.running && !p.checkedAt ? h('span', { class: 'muted' }, 'Looking…') : p.checkedAt ? h('span', { class: 'muted' }, 'None found') : '—'),
           h('td', {}, h('button', { class: 'link', type: 'button', onclick: () => removeOne(p) }, p.kind === 'contact' ? 'Remove' : 'Forget')));

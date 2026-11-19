@@ -26,7 +26,7 @@ test('Google News RSS parsing strips the outlet suffix and resolves domains', ()
 test('GDELT results are normalised', async () => {
   const fakeFetch = async () => new Response(JSON.stringify({ articles: [{ url: 'https://www.electrek.co/a', title: 'E-bike sales rise', seendate: '20261110T120000Z', domain: 'electrek.co', language: 'English' }] }));
   const arts = await gdeltSearch('"e-bike"', { fetchImpl: fakeFetch });
-  assert.deepEqual(arts[0], { title: 'E-bike sales rise', url: 'https://www.electrek.co/a', domain: 'electrek.co', date: '2026-11-10', source: 'gdelt', language: 'English' });
+  assert.deepEqual(arts[0], { title: 'E-bike sales rise', url: 'https://www.electrek.co/a', domain: 'electrek.co', date: '2026-11-10', source: 'gdelt', language: 'English', country: '' });
 });
 
 test('discovery fails soft and recent coverage boosts targeting (TG-3)', async () => {

@@ -14,7 +14,8 @@ import { outboxFiles, emailProvider, sendTestEmail, checkEmailConnection } from 
 import { socialAdapters } from './src/distribute/social.js';
 import { newsroomRoot } from './src/distribute/newsroom.js';
 import { resolveLink, recordClick } from './src/distribute/tracking.js';
-import { llmAvailable, MODEL } from './src/generate/claude.js';
+import { llmAvailable, MODEL, translateCategory } from './src/generate/claude.js';
+import { runHarvest, harvestRunning, coverageReport, loadState as harvestState, addCategory, removeCategory, startHarvestScheduler, harvestEnabled, nextRunAt, harvestHour } from './src/engine/harvest.js';
 import { TOPICS } from './src/knowledge/topics.js';
 import { runResearch, researchState, researchEnabled } from './src/engine/campaign.js';
 import { searchDirectory, directoryStats, forgetJournalist, directoryCsv } from './src/engine/directory.js';
@@ -129,12 +130,28 @@ async function api(req, res, parts, url) {
   if (a === 'plan' && m === 'GET') return send(res, 200, { current: currentPlan().id, plans: Object.values(PLANS).map((p) => ({ ...p, research: p.research, directory: { ...p.directory, reusePerCampaign: Number.isFinite(p.directory.reusePerCampaign) ? p.directory.reusePerCampaign : null, browseLimit: Number.isFinite(p.directory.browseLimit) ? p.directory.browseLimit : null } })), upgradeUrl: upgradeUrl() });
 
   // One list of everyone: your uploaded contacts + researched reporters.
+  if (a === 'harvest') {
+    if (m === 'GET' && !b) {
+      const st = harvestState();
+      return send(res, 200, { enabled: harvestEnabled(), hourUtc: harvestHour(), nextRunAt: harvestEnabled() ? nextRunAt(st).toISOString() : null, running: harvestRunning() ? st.running || { startedAt: '' } : null, lastRunDate: st.lastRunDate, runs: st.runs.slice(0, 10), coverage: coverageReport(st) });
+    }
+    if (m === 'POST' && b === 'run') {
+      if (!harvestRunning()) runHarvest({ translate: llmAvailable() ? translateCategory : null }).catch((e) => console.error('daily research', e.message));
+      return send(res, 202, { running: true });
+    }
+    if (m === 'POST' && b === 'categories') {
+      const body = await readBody(req);
+      if (body.remove) removeCategory(String(body.remove));
+      const added = body.add ? addCategory({ label: String(body.add.label || ''), phrases: [].concat(body.add.phrases || []).map(String) }) : null;
+      return send(res, 200, { added, coverage: coverageReport() });
+    }
+  }
   if (a === 'people') {
     const plan = currentPlan();
     if (m === 'GET' && !b) {
       const cid = url.searchParams.get('campaign');
       const camp = cid ? loadCampaign(cid) : null;
-      const r = listPeople({ q: url.searchParams.get('q') || '', source: url.searchParams.get('source') || '', tag: url.searchParams.get('tag') || '', cover: url.searchParams.get('cover') || url.searchParams.get('topic') || '', show: url.searchParams.get('show') || 'active', researchLimit: plan.directory.browseLimit, campaign: camp });
+      const r = listPeople({ zone: url.searchParams.get('zone') || '', verifiedIn: url.searchParams.get('verified') || '', q: url.searchParams.get('q') || '', source: url.searchParams.get('source') || '', tag: url.searchParams.get('tag') || '', cover: url.searchParams.get('cover') || url.searchParams.get('topic') || '', show: url.searchParams.get('show') || 'active', researchLimit: plan.directory.browseLimit, campaign: camp });
       if (camp) {
         const inList = new Set(camp.targets.map(personKeyOf));
         const emails = new Set(camp.targets.map((t) => t.email.toLowerCase()));
@@ -314,6 +331,8 @@ export function start({ port = PORT, host = HOST } = {}) {
   startScheduler();
   // Shortly after start, look up recent articles for anyone who has none yet.
   if (process.env.RELAY_OFFLINE !== '1') setTimeout(() => startArticleBackfill(allPeople).catch(() => null), 5000).unref();
+  const tick = startHarvestScheduler({ translate: llmAvailable() ? translateCategory : null });
+  if (tick) { tick.unref?.(); console.log(`Daily journalist research: on, ${String(harvestHour()).padStart(2, '0')}:00 UTC`); }
   return server;
 }
 

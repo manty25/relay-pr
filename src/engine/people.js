@@ -4,6 +4,9 @@
 //   person ids:  c:<contact id>   — from your uploaded list
 //                j:<journalist id> — from research (published addresses or Apollo.io)
 import { loadContacts, saveContacts, loadSuppression, isSuppressed } from './contacts.js';
+import { isVerified, loadState as loadHarvest } from './harvest.js';
+let mxCache = null, mxAt = 0;
+const harvestMx = () => { if (!mxCache || Date.now() - mxAt > 60000) { mxCache = loadHarvest().mx || {}; mxAt = Date.now(); } return mxCache; };
 import { loadJournalists, saveJournalists, usableEmail, isStale, forgetJournalist } from './directory.js';
 import { findOutlet } from './targeting.js';
 import { outletFacts } from './profiles.js';
@@ -28,6 +31,8 @@ function fromJournalist(j, supp) {
     email: e?.address || '', emailSource: e?.source || '', provider: e?.provider || (e ? 'published' : ''), verifiedAt: e?.verifiedAt || '', stale: e ? isStale(e) : false,
     sources: [e?.provider === 'apollo' ? 'apollo' : 'research'], beats: Object.keys(j.beats || {}), topics: Object.keys(j.topics || {}), tags: j.tags || [],
     latestArticle: j.recent?.[0] || j.articles?.[0] || null, outletLine: outletFacts(j.domain), doNotContact: Boolean(anyEmail && !e) || j.optedOut, raw: j,
+    zone: j.zone || '', country: j.country || '', coverage: j.coverage || {},
+    verifiedIn: Object.keys(j.coverage || {}).filter((cat) => isVerified(j, cat, j.zone, { supp, mx: harvestMx() })),
   };
 }
 
@@ -72,13 +77,15 @@ export function fitFor(p, c) {
 // Filters + facet counts. Facet counts follow the other active filters (search, source, show and the
 // other dropdown), so the dropdowns always reflect what you'd get by choosing an option.
 //   cover: a Relay topic id (e.g. product_launch) or a beat from "Covers" (e.g. apac-technology)
-export function listPeople({ q = '', source = '', tag = '', topic = '', cover = '', show = 'active', researchLimit = Infinity, campaign = null } = {}) {
+export function listPeople({ zone = '', verifiedIn = '', q = '', source = '', tag = '', topic = '', cover = '', show = 'active', researchLimit = Infinity, campaign = null } = {}) {
   cover ||= topic;
   const s = q.trim().toLowerCase();
   let base = allPeople();
   if (show === 'dnc') base = base.filter((p) => p.doNotContact);
   else if (show !== 'all') base = base.filter((p) => !p.doNotContact);
   if (source) base = base.filter((p) => p.sources.includes(source));
+  if (zone) base = base.filter((p) => p.zone === zone);
+  if (verifiedIn) base = base.filter((p) => (p.verifiedIn || []).includes(verifiedIn));
   if (s) {
     // Meaning-based: "France" = "French" = .fr domains; "AI" = "artificial intelligence"; plurals and accents ignored.
     const needs = parseQuery(s);

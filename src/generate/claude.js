@@ -221,3 +221,23 @@ ${site.pages.map((p) => `<page url="${p.url}" title="${p.title.replace(/"/g, "'"
   const facts = (d.facts || []).filter((f) => f.text && nums(f.text).every((n) => text.includes(n.replace(/[.,]$/, '')))).slice(0, 6);
   return { about: d.about || '', audience: d.audience || '', sector: d.sector || '', facts };
 }
+
+// Search phrases for a research category in EU newsroom languages (cached by the caller).
+const LANGS = ['de', 'fr', 'nl', 'es', 'it', 'sv', 'pl', 'fi', 'da'];
+const TRANSLATE_SCHEMA = obj(Object.fromEntries(LANGS.map((l) => [l, arr(str)])));
+export async function translateCategory(cat) {
+  const stream = client().beta.messages.stream({
+    model: MODEL,
+    max_tokens: 2000,
+    betas: ['server-side-fallback-2026-07-01'],
+    fallbacks: 'default',
+    thinking: { type: 'adaptive' },
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: TRANSLATE_SCHEMA } },
+    system: 'For each language code, give 2-3 short search phrases (1-3 words) that local news articles on this beat actually use. Natural newsroom wording, not literal translations. Keep widely used English terms (e.g. "fintech") where local press uses them.',
+    messages: [{ role: 'user', content: `Beat: ${cat.label}\nEnglish phrases: ${cat.phrases.join(', ')}\nLanguages: ${LANGS.join(', ')}` }],
+  });
+  const msg = await stream.finalMessage();
+  if (msg.stop_reason === 'refusal' || msg.stop_reason === 'max_tokens') throw new Error(`Claude did not finish (${msg.stop_reason})`);
+  const d = JSON.parse(msg.content.filter((b) => b.type === 'text').map((b) => b.text).join(''));
+  return Object.fromEntries(LANGS.map((l) => [l, (d[l] || []).map((x) => String(x).trim()).filter((x) => x && x.split(/\s+/).length <= 3).slice(0, 3)]));
+}

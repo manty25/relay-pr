@@ -195,7 +195,8 @@ function feedUrls(html, base) {
 // Authors of an article page: JSON-LD, meta tags, rel=author links.
 export function articleAuthors(html, pageUrl, outletName = '') {
   const found = [];
-  const add = (name, url) => { const n = personName(name, outletName); if (n && !found.some((f) => f.name === n)) found.push({ name: n, profileUrl: url || '' }); };
+  const abs = (u) => { try { return u ? new URL(u, pageUrl).toString() : ''; } catch { return ''; } };
+  const add = (name, url) => { const n = personName(name, outletName); if (n && !found.some((f) => f.name === n)) found.push({ name: n, profileUrl: abs(url) }); };
   for (const node of jsonLd(html)) {
     const type = [].concat(node['@type'] || []).join(' ');
     if (!/Article|BlogPosting|Report/i.test(type)) continue;
@@ -225,6 +226,15 @@ export function articleAuthors(html, pageUrl, outletName = '') {
 }
 
 // What the site says about itself (homepage meta tags).
+// Publication date of an article page (JSON-LD datePublished, then meta tags), as YYYY-MM-DD.
+export function publishedDate(html) {
+  const cands = [];
+  for (const node of jsonLd(html)) if (node.datePublished) cands.push(node.datePublished);
+  cands.push(meta(html, 'article:published_time'), meta(html, 'og:published_time'), meta(html, 'date'), meta(html, 'pubdate'), (String(html).match(/<time[^>]+datetime="([^"]+)"/i) || [])[1]);
+  for (const c of cands) { const d = c && new Date(c); if (d && !isNaN(d) && d.getFullYear() > 1995 && d <= new Date(Date.now() + 86400000)) return d.toISOString().slice(0, 10); }
+  return '';
+}
+
 export function siteMeta(html) {
   const title = stripTags((String(html || '').match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || '');
   return {
@@ -295,7 +305,7 @@ async function researchOutlet(o, ctx, fetcher) {
   for (const a of articles) {
     let authors = [];
     const html = await fetcher.get(a.url);
-    if (html) authors = articleAuthors(html, a.url, o.name);
+    if (html) { authors = articleAuthors(html, a.url, o.name); if (!a.date) a.date = publishedDate(html); }
     if (!authors.length && a.creator) { const n = personName(a.creator, o.name); if (n) authors = [{ name: n, profileUrl: '' }]; }
     for (const au of authors) {
       const p = people.get(au.name) || { name: au.name, outlet: o.name, domain: o.domain, profileUrl: '', emails: [], social: {}, articles: [] };

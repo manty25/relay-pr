@@ -15,6 +15,7 @@ import { outletFacts, enrichCampaignProfiles } from './profiles.js';
 import { writeOffline, quoteParagraph } from '../generate/offline.js';
 import { llmAvailable, writeWithClaude, repairWithClaude, inferCoverage, extractFromWebsite, MODEL } from '../generate/claude.js';
 import { readWebsite, siteText, offlineSuggestions } from './website.js';
+import { addCategory } from './harvest.js';
 import { pitchFor, followUpFor, releaseText, wirePackage, newsroomHtml, defaultOpener } from '../generate/compose.js';
 import { TK } from './brief.js';
 import { sendEmail } from '../distribute/email.js';
@@ -108,6 +109,8 @@ async function coverageHint(brief, cls, opts) {
   try {
     const hint = await Promise.race([inferCoverage(brief), new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 25000))]);
     applyHint(cls, hint);
+    // A sector the daily research doesn't cover yet becomes a category of its own.
+    if (hint.beat && hint.phrases?.length) { try { addCategory({ id: hint.beat, label: hint.sector || hint.beat, phrases: hint.phrases }, { auto: true }); } catch { /* not critical */ } }
     return hint;
   } catch { return null; }
 }
